@@ -9,8 +9,8 @@ Before submitting any code changes, complete the following verification steps:
 Run `ruff` to ensure compliance with the repository's code style rules:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
 UV_LINK_MODE=copy \
 uv run --extra dev ruff check .
 ```
@@ -18,8 +18,8 @@ uv run --extra dev ruff check .
 To automatically fix auto-correctable issues, run:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
 UV_LINK_MODE=copy \
 uv run --extra dev ruff check --fix .
 ```
@@ -31,8 +31,8 @@ uv run --extra dev ruff check --fix .
 Validate type hints and structures using `basedpyright`:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
 UV_LINK_MODE=copy \
 uv run --extra dev basedpyright
 ```
@@ -44,8 +44,8 @@ uv run --extra dev basedpyright
 Execute the test suite to ensure all unit and integration tests are passing:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
 UV_LINK_MODE=copy \
 uv run --extra dev pytest
 ```
@@ -58,10 +58,10 @@ Test the proxy manually using `curl`:
 
 1. Start the proxy in one terminal:
    ```bash
-   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-   UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+   UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
    UV_LINK_MODE=copy \
-   uv run --extra dev tls-impersonate-proxy --port 8899
+   uv run --extra dev impersonate-proxy --port 8899
    ```
 2. In another terminal, make a request using the proxy:
    ```bash

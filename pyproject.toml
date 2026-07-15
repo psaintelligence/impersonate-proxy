@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["tls_impersonate_proxy"]
+packages = ["impersonate_proxy"]
 
 
 [project]
-name = "tls-impersonate-proxy"
+name = "impersonate-proxy"
 dynamic = ["version"]
 description = "HTTP/HTTPS proxy that impersonates browser TLS fingerprints using curl_cffi"
 requires-python = ">=3.12"
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tls-impersonate-proxy = "tls_impersonate_proxy.main:main"
+impersonate-proxy = "impersonate_proxy.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -58,7 +58,7 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 [tool.ruff.lint.isort]
-known-first-party = ["tls_impersonate_proxy"]
+known-first-party = ["impersonate_proxy"]
 
 [tool.basedpyright]
 pythonVersion = "3.12"
@@ -75,7 +75,7 @@ reportArgumentType = "none"
 reportAttributeAccessIssue = "none"
 reportOptionalMemberAccess = "none"
 reportPossiblyUnboundVariable = "none"
-include = ["src/tls_impersonate_proxy"]
+include = ["src/impersonate_proxy"]
 exclude = ["**/node_modules", "**/__pycache__", "venv", ".venv"]
 
 [tool.pytest.ini_options]

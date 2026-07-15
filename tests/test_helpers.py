@@ -1,6 +1,6 @@
 """Unit tests for utility and helper functions."""
 
-from tls_impersonate_proxy import main as tls_impersonate_proxy
+from impersonate_proxy import main as impersonate_proxy
 
 
 class TestHostPortParsing:
@@ -28,39 +28,39 @@ class TestHostPortParsing:
 
 class TestSessionManagement:
     def test_get_session_returns_session(self):
-        session = tls_impersonate_proxy._get_session()
+        session = impersonate_proxy._get_session()
         assert session is not None
-        tls_impersonate_proxy._release_session(session)
+        impersonate_proxy._release_session(session)
 
     def test_session_release_and_reuse(self):
         # Clear pool first
-        tls_impersonate_proxy._clear_session_pool()
-        s1 = tls_impersonate_proxy._get_session()
-        tls_impersonate_proxy._release_session(s1)
+        impersonate_proxy._clear_session_pool()
+        s1 = impersonate_proxy._get_session()
+        impersonate_proxy._release_session(s1)
         # Reuse same session from pool
-        s2 = tls_impersonate_proxy._get_session()
+        s2 = impersonate_proxy._get_session()
         assert s1 is s2
-        tls_impersonate_proxy._release_session(s2)
+        impersonate_proxy._release_session(s2)
 
     def test_get_session_concurrency_creates_new_sessions(self):
-        tls_impersonate_proxy._clear_session_pool()
-        s1 = tls_impersonate_proxy._get_session()
-        s2 = tls_impersonate_proxy._get_session()
+        impersonate_proxy._clear_session_pool()
+        s1 = impersonate_proxy._get_session()
+        s2 = impersonate_proxy._get_session()
         assert s1 is not s2
-        tls_impersonate_proxy._release_session(s1)
-        tls_impersonate_proxy._release_session(s2)
+        impersonate_proxy._release_session(s1)
+        impersonate_proxy._release_session(s2)
 
 
 class TestRedactionUtilities:
     def test_show_identifying_redacts_by_default(self):
-        tls_impersonate_proxy._DEBUG = False
-        assert tls_impersonate_proxy._show_identifying("secret-domain.com") == "[redacted]"
+        impersonate_proxy._DEBUG = False
+        assert impersonate_proxy._show_identifying("secret-domain.com") == "[redacted]"
 
     def test_show_identifying_reveals_in_debug(self):
-        tls_impersonate_proxy._DEBUG = True
-        assert tls_impersonate_proxy._show_identifying("secret-domain.com") == "secret-domain.com"
+        impersonate_proxy._DEBUG = True
+        assert impersonate_proxy._show_identifying("secret-domain.com") == "secret-domain.com"
         # Reset debug flag
-        tls_impersonate_proxy._DEBUG = False
+        impersonate_proxy._DEBUG = False
 
     def test_sanitize_headers_redacts_sensitive_keys(self):
         headers = {
@@ -69,7 +69,7 @@ class TestRedactionUtilities:
             "Cookie": "session=abc",
             "X-Custom-Header": "value",
         }
-        sanitized = tls_impersonate_proxy._sanitize_headers(headers)
+        sanitized = impersonate_proxy._sanitize_headers(headers)
         assert sanitized["Host"] == "example.com"
         assert sanitized["X-Custom-Header"] == "value"
         assert sanitized["Authorization"] == "[redacted-sensitive]"

@@ -9,15 +9,15 @@ nav:
 # Site
 # ===
 docs_dir: docs
-site_name: TLS Impersonate Proxy
-site_url: https://ndejong.github.io/tls-impersonate-proxy/
+site_name: Impersonate Proxy
+site_url: https://ndejong.github.io/impersonate-proxy/
 site_author: ndejong
 site_description: HTTP/HTTPS proxy that impersonates browser TLS fingerprints (JA3/JA4) using curl_cffi
 
 # Repo
 # ===
-repo_url: https://github.com/ndejong/tls-impersonate-proxy
-repo_name: ndejong/tls-impersonate-proxy
+repo_url: https://github.com/ndejong/impersonate-proxy
+repo_name: ndejong/impersonate-proxy
 
 
 # Copyright
@@ -52,9 +52,9 @@ theme:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/ndejong/tls-impersonate-proxy
+      link: https://github.com/ndejong/impersonate-proxy
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/tls-impersonate-proxy/
+      link: https://pypi.org/project/impersonate-proxy/
 
 
 # Extras

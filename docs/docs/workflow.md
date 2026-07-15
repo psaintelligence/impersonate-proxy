@@ -1,6 +1,6 @@
 # How It Works (Architecture & Workflow)
 
-`tls-impersonate-proxy` acts as a transparent intermediary that sits between client applications (like `curl`, `ffmpeg`, or Python HTTP clients) and the destination servers. It prevents fingerprint blocking by aligning the client's TLS handshake fingerprint with its HTTP headers.
+`impersonate-proxy` acts as a transparent intermediary that sits between client applications (like `curl`, `ffmpeg`, or Python HTTP clients) and the destination servers. It prevents fingerprint blocking by aligning the client's TLS handshake fingerprint with its HTTP headers.
 
 ---
 
@@ -11,7 +11,7 @@ Below is a diagram illustrating how the proxy handles client requests:
 ```mermaid
 sequenceDiagram
     participant Client as Client (e.g. curl)
-    participant Proxy as TLS Impersonate Proxy
+    participant Proxy as Impersonate Proxy
     participant Target as Target Server (CDN/WAF)
 
     Client->>Proxy: HTTP request or HTTPS CONNECT
@@ -133,13 +133,13 @@ curl -x http://127.0.0.1:8899 \
 **Option 2 — Disable enrichment entirely** with `--no-enrich-headers`:
 
 ```bash
-tls-impersonate-proxy --no-enrich-headers
+impersonate-proxy --no-enrich-headers
 ```
 
 Or via environment variable:
 
 ```bash
-TLS_PROXY_ENRICH_HEADERS=false tls-impersonate-proxy
+IMPERSONATE_PROXY_ENRICH_HEADERS=false impersonate-proxy
 ```
 
 With enrichment disabled, headers are forwarded exactly as received from the client — nothing is added or modified. This gives you complete control, but you become responsible for ensuring your headers are consistent with the TLS fingerprint.

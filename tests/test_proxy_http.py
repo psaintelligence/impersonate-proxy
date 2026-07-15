@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from tls_impersonate_proxy import main as tls_impersonate_proxy
+from impersonate_proxy import main as impersonate_proxy
 
 
 class MockUpstreamHandler(BaseHTTPRequestHandler):
@@ -98,13 +98,13 @@ def proxy_server():
         except Exception:
             return None
 
-    with patch.object(tls_impersonate_proxy, "_do_request", _mock_do_request):
+    with patch.object(impersonate_proxy, "_do_request", _mock_do_request):
         from socketserver import ThreadingMixIn
 
         class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
             daemon_threads = True
 
-        server = ThreadingHTTPServer(("127.0.0.1", port), tls_impersonate_proxy.ProxyHandler)
+        server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 

@@ -11,15 +11,15 @@ Whenever you use `uv` to install dependencies, run scripts, execute tests, or pe
 
 Use this exact prefix:
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
 UV_LINK_MODE=copy \
 uv <command>
 ```
 
 **Example (Running Tests):**
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy UV_LINK_MODE=copy uv run pytest
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run pytest
 ```
 
 Failure to use this prefix may result in a `.venv` being created in the workspace, which is strictly prohibited.

@@ -1,6 +1,6 @@
-# Project Context: tls-impersonate-proxy
+# Project Context: impersonate-proxy
 
-Welcome to the `tls-impersonate-proxy` codebase context. This document outlines the core stack, architecture, design decisions, and coding standards.
+Welcome to the `impersonate-proxy` codebase context. This document outlines the core stack, architecture, design decisions, and coding standards.
 
 ---
 
@@ -41,8 +41,8 @@ The proxy operates in two primary modes depending on whether it receives plain H
 Always run the tests using isolated virtual environment prefixes to prevent `.venv` directory creation in the repository:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
-UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy \
+UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy \
 UV_LINK_MODE=copy \
 uv run --extra dev pytest
 ```

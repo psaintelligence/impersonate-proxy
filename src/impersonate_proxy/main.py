@@ -6,10 +6,10 @@ Uses curl_cffi to re-issue every request with a browser TLS fingerprint
 
 Supports both plain HTTP proxy requests and HTTPS CONNECT tunnels via
 MITM with an auto-generated CA certificate stored in --ca-dir
-(default: ~/.config/tls-impersonate-proxy).
+(default: ~/.config/impersonate-proxy).
 
 Usage:
-    tls-impersonate-proxy [--port PORT] [--host HOST] [--impersonate BROWSER]
+    impersonate-proxy [--port PORT] [--host HOST] [--impersonate BROWSER]
 
     # As an HTTP proxy for curl:
     curl -x http://127.0.0.1:8899 https://example.com
@@ -18,9 +18,9 @@ Usage:
     ffmpeg -http_proxy http://127.0.0.1:8899 -i https://stream.example.com/live.m3u8 output.mp4
 
 Environment variables:
-    TLS_PROXY_PORT          Port to listen on (default: 8899)
-    TLS_PROXY_HOST          Host to bind to (default: 127.0.0.1)
-    TLS_PROXY_IMPERSONATE   Browser to impersonate (default: chrome)
+    IMPERSONATE_PROXY_PORT          Port to listen on (default: 8899)
+    IMPERSONATE_PROXY_HOST          Host to bind to (default: 127.0.0.1)
+    IMPERSONATE_PROXY_IMPERSONATE   Browser to impersonate (default: chrome)
 """
 
 import argparse
@@ -58,10 +58,10 @@ _HOST_CERT_LOCK: threading.Lock = threading.Lock()
 _HOST_CERT_MAX: int = 256
 _SESSION_POOL_MAX: int = 32
 _SESSION_POOL: queue.Queue[cffi_requests.Session] = queue.Queue(maxsize=_SESSION_POOL_MAX)
-_IMPERSONATE: str = os.environ.get("TLS_PROXY_IMPERSONATE", "chrome")
-_ENRICH_HEADERS: bool = os.environ.get("TLS_PROXY_ENRICH_HEADERS", "true").lower() not in ("false", "0", "no")
+_IMPERSONATE: str = os.environ.get("IMPERSONATE_PROXY_IMPERSONATE", "chrome")
+_ENRICH_HEADERS: bool = os.environ.get("IMPERSONATE_PROXY_ENRICH_HEADERS", "true").lower() not in ("false", "0", "no")
 _DEBUG: bool = False
-logger: logging.Logger = logging.getLogger("tls-impersonate-proxy")
+logger: logging.Logger = logging.getLogger("impersonate-proxy")
 
 _SENSITIVE_HEADERS: set[str] = {
     "authorization",
@@ -96,7 +96,7 @@ def _init_ca(ca_dir: str | None = None) -> None:
         _HOST_CERT_CACHE.clear()
     _clear_session_pool()
     if ca_dir is None:
-        ca_dir = os.environ.get("TLS_PROXY_CA_DIR") or os.path.expanduser("~/.config/tls-impersonate-proxy")
+        ca_dir = os.environ.get("IMPERSONATE_PROXY_CA_DIR") or os.path.expanduser("~/.config/impersonate-proxy")
 
     os.makedirs(ca_dir, exist_ok=True)
 
@@ -117,7 +117,7 @@ def _init_ca(ca_dir: str | None = None) -> None:
         _CA_KEY = ec.generate_private_key(ec.SECP256R1())
         subject = issuer = x509.Name(
             [
-                x509.NameAttribute(NameOID.COMMON_NAME, "TLS Impersonate Proxy CA"),
+                x509.NameAttribute(NameOID.COMMON_NAME, "Impersonate Proxy CA"),
             ]
         )
         subject_key_id = x509.SubjectKeyIdentifier.from_public_key(_CA_KEY.public_key())
@@ -673,7 +673,7 @@ def run(
 
     server = ThreadingHTTPServer((host, port), ProxyHandler)
     logger.info(
-        f"tls-impersonate-proxy listening on {host}:{port} "
+        f"impersonate-proxy listening on {host}:{port} "
         f"(impersonating {impersonate}, enrich_headers={enrich_headers}, debug={debug})"
     )
     server.serve_forever()
@@ -686,38 +686,38 @@ def main() -> None:
         "--port",
         "-p",
         type=int,
-        default=int(os.environ.get("TLS_PROXY_PORT", "8899")),
+        default=int(os.environ.get("IMPERSONATE_PROXY_PORT", "8899")),
         help="Port to listen on (default: 8899)",
     )
     parser.add_argument(
         "--host",
         "-H",
-        default=os.environ.get("TLS_PROXY_HOST", "127.0.0.1"),
+        default=os.environ.get("IMPERSONATE_PROXY_HOST", "127.0.0.1"),
         help="Host to bind to (default: 127.0.0.1)",
     )
     parser.add_argument(
         "--impersonate",
         "-i",
-        default=os.environ.get("TLS_PROXY_IMPERSONATE", "chrome"),
+        default=os.environ.get("IMPERSONATE_PROXY_IMPERSONATE", "chrome"),
         help="Browser to impersonate (default: chrome)",
     )
     parser.add_argument(
         "--ca-dir",
         "-c",
-        default=os.environ.get("TLS_PROXY_CA_DIR"),
+        default=os.environ.get("IMPERSONATE_PROXY_CA_DIR"),
         help="Directory to store/load CA certificate and private key",
     )
     parser.add_argument(
         "--no-enrich-headers",
         action="store_true",
-        default=os.environ.get("TLS_PROXY_ENRICH_HEADERS", "true").lower() in ("false", "0", "no"),
+        default=os.environ.get("IMPERSONATE_PROXY_ENRICH_HEADERS", "true").lower() in ("false", "0", "no"),
         help="Disable automatic browser header enrichment (User-Agent, Sec-Fetch-*, etc.)",
     )
     parser.add_argument(
         "--debug",
         "-d",
         action="store_true",
-        default=os.environ.get("TLS_PROXY_DEBUG", "").lower() in ("true", "1", "yes"),
+        default=os.environ.get("IMPERSONATE_PROXY_DEBUG", "").lower() in ("true", "1", "yes"),
         help="Enable verbose debug logging and show identifying details in logs",
     )
     args = parser.parse_args()

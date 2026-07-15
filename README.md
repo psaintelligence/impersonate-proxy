@@ -1,7 +1,7 @@
-# tls-impersonate-proxy
+# impersonate-proxy
 
 > [!NOTE]
-> This project is a fork of the original source project [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) maintained at [ndejong/tls-impersonate-proxy](https://github.com/ndejong/tls-impersonate-proxy).
+> This project is a fork of the original source project [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) maintained at [ndejong/impersonate-proxy](https://github.com/ndejong/impersonate-proxy).
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints using [curl_cffi](https://github.com/lexiforest/curl_cffi). Defeats JA3/JA4 TLS fingerprinting used by CDNs to block non-browser clients.
 
@@ -17,13 +17,13 @@ Many CDNs use TLS fingerprinting (JA3/JA4) to distinguish real browsers from too
 ## Install
 
 ```bash
-pip install git+https://github.com/ndejong/tls-impersonate-proxy.git
+pip install git+https://github.com/ndejong/impersonate-proxy.git
 ```
 
 Or with [uv](https://github.com/astral-sh/uv):
 
 ```bash
-uv pip install git+https://github.com/ndejong/tls-impersonate-proxy.git
+uv pip install git+https://github.com/ndejong/impersonate-proxy.git
 ```
 
 ---
@@ -32,16 +32,16 @@ uv pip install git+https://github.com/ndejong/tls-impersonate-proxy.git
 
 ```bash
 # Start the proxy (default: 127.0.0.1:8899)
-tls-impersonate-proxy
+impersonate-proxy
 
 # Custom port and host
-tls-impersonate-proxy --port 9000 --host 0.0.0.0
+impersonate-proxy --port 9000 --host 0.0.0.0
 
 # Different browser fingerprint
-tls-impersonate-proxy --impersonate edge101
+impersonate-proxy --impersonate edge101
 
 # Custom CA certificate storage directory
-tls-impersonate-proxy --ca-dir ~/.my-certs
+impersonate-proxy --ca-dir ~/.my-certs
 ```
 
 ### With ffmpeg
@@ -55,7 +55,7 @@ ffmpeg -http_proxy http://127.0.0.1:8899 -i https://stream.example.com/live.m3u8
 To use the proxy with HTTPS requests, you must pass the generated CA certificate to curl or install it in your system trust store:
 
 ```bash
-curl --cacert ~/.config/tls-impersonate-proxy/ca.crt -x http://127.0.0.1:8899 https://example.com
+curl --cacert ~/.config/impersonate-proxy/ca.crt -x http://127.0.0.1:8899 https://example.com
 ```
 
 ### With any HTTP client
@@ -67,8 +67,8 @@ export http_proxy=http://127.0.0.1:8899
 export https_proxy=http://127.0.0.1:8899
 
 # For Python HTTP clients (requests, httpx)
-export REQUESTS_CA_BUNDLE=~/.config/tls-impersonate-proxy/ca.crt
-export SSL_CERT_FILE=~/.config/tls-impersonate-proxy/ca.crt
+export REQUESTS_CA_BUNDLE=~/.config/impersonate-proxy/ca.crt
+export SSL_CERT_FILE=~/.config/impersonate-proxy/ca.crt
 ```
 
 ---
@@ -77,12 +77,12 @@ export SSL_CERT_FILE=~/.config/tls-impersonate-proxy/ca.crt
 
 | Command Line Option | Environment Variable | Default | Description |
 |---|---|---|---|
-| `--port` / `-p` | `TLS_PROXY_PORT` | `8899` | Port to listen on |
-| `--host` / `-H` | `TLS_PROXY_HOST` | `127.0.0.1` | Host to bind to |
-| `--impersonate` / `-i` | `TLS_PROXY_IMPERSONATE` | `chrome` | Browser to impersonate |
-| `--ca-dir` / `-c` | `TLS_PROXY_CA_DIR` | `~/.config/tls-impersonate-proxy` | Directory to load/store the CA files |
-| `--no-enrich-headers` | `TLS_PROXY_ENRICH_HEADERS=false` | *(enrichment on)* | Disable automatic browser header injection (User-Agent, Sec-Fetch-*, etc.) |
-| `--debug` / `-d` | `TLS_PROXY_DEBUG` | `false` | Enable verbose debug logging and show identifying details in logs |
+| `--port` / `-p` | `IMPERSONATE_PROXY_PORT` | `8899` | Port to listen on |
+| `--host` / `-H` | `IMPERSONATE_PROXY_HOST` | `127.0.0.1` | Host to bind to |
+| `--impersonate` / `-i` | `IMPERSONATE_PROXY_IMPERSONATE` | `chrome` | Browser to impersonate |
+| `--ca-dir` / `-c` | `IMPERSONATE_PROXY_CA_DIR` | `~/.config/impersonate-proxy` | Directory to load/store the CA files |
+| `--no-enrich-headers` | `IMPERSONATE_PROXY_ENRICH_HEADERS=false` | *(enrichment on)* | Disable automatic browser header injection (User-Agent, Sec-Fetch-*, etc.) |
+| `--debug` / `-d` | `IMPERSONATE_PROXY_DEBUG` | `false` | Enable verbose debug logging and show identifying details in logs |
 
 ---
 
@@ -109,7 +109,7 @@ You can run the proxy inside Docker using the provided `Dockerfile` and `docker-
    ```
 2. Retrieve the generated CA certificate from the volume (to use in client requests):
    ```bash
-   docker cp tls-impersonate-proxy:/certs/ca.crt ./ca.crt
+   docker cp impersonate-proxy:/certs/ca.crt ./ca.crt
    ```
 3. Test the proxy connection:
    ```bash

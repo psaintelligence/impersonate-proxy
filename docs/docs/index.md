@@ -1,4 +1,4 @@
-# TLS Impersonate Proxy
+# Impersonate Proxy
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints (JA3/JA4) using `curl_cffi` to defeat CDN fingerprint-based blocking of non-browser clients.
 
@@ -19,15 +19,15 @@ Spin up the proxy container in one line:
 
 ```bash
 docker run --rm -p 8899:8899 \
-  -v tls-proxy-ca-certs:/root/.config/tls-impersonate-proxy \
-  ghcr.io/ndejong/tls-impersonate-proxy:latest
+  -v impersonate-proxy-ca-certs:/root/.config/impersonate-proxy \
+  ghcr.io/ndejong/impersonate-proxy:latest
 ```
 
 Once started, configure your client to use the proxy:
 
 ```bash
 # Export the generated CA cert to trust the proxy
-export SSL_CERT_FILE=~/.config/tls-impersonate-proxy/ca.crt
+export SSL_CERT_FILE=~/.config/impersonate-proxy/ca.crt
 
 # Issue request through the proxy
 curl -x http://127.0.0.1:8899 https://cloudflare.com
@@ -51,9 +51,8 @@ curl -x http://127.0.0.1:8899 https://cloudflare.com
 
 - **[Installation Guide](install.md)**: System setup, CLI parameters, and Docker integrations.
 - **[How It Works](workflow.md)**: Deep dive into the interception pipeline, session pool, and header decoration mechanism.
-```
 
 ---
 
 !!! note "Fork Attribution"
-    This project is a fork of the original source project [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) maintained at [ndejong/tls-impersonate-proxy](https://github.com/ndejong/tls-impersonate-proxy).
+    This project is a fork of the original source project [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) maintained at [ndejong/impersonate-proxy](https://github.com/ndejong/impersonate-proxy).

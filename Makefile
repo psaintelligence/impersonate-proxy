@@ -1,4 +1,4 @@
-# Makefile for tls-impersonate-proxy
+# Makefile for impersonate-proxy
 # Enforces isolated Python virtual environments using uv to prevent local .venv leakage.
 
 .PHONY: help setup sync test test-verbose test-live test-extended benchmark lint format lint-fix typecheck build clean bump-patch bump-minor docs-sync docs-build docs-serve
@@ -6,7 +6,7 @@
 .DEFAULT_GOAL := help
 
 # UV execution prefix with environment isolation
-UV := UV_PROJECT_ENVIRONMENT=$(HOME)/.local/venvs/tls-impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy UV_LINK_MODE=copy uv
+UV := UV_PROJECT_ENVIRONMENT=$(HOME)/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv
 
 # Show help menu of available commands
 help:
@@ -33,7 +33,7 @@ help:
 # Create virtual environment and sync dependencies
 setup:
 	@echo "Initializing isolated virtual environment..."
-	$(UV) venv --clear $(HOME)/.local/venvs/tls-impersonate-proxy
+	$(UV) venv --clear $(HOME)/.local/venvs/impersonate-proxy
 	@echo "Syncing dependencies..."
 	$(UV) sync --extra dev
 
@@ -91,14 +91,14 @@ clean:
 
 # Bump the patch version number (e.g. 0.1.0 -> 0.1.1)
 bump-patch:
-	@$(UV) run python -c 'import re; from pathlib import Path; p = Path("src/tls_impersonate_proxy/__init__.py"); c = p.read_text(); m = re.search(r"^__version__\s*=\s*\"([^\"]+)\"", c, re.MULTILINE); v = m.group(1); parts = v.split("."); n = f"{parts[0]}.{parts[1]}.{int(parts[2])+1}"; p.write_text(re.sub(r"^__version__\s*=\s*\"[^\"]+\"", f"__version__ = \"{n}\"", c, flags=re.MULTILINE)); print(f"Bumped patch version: {v} -> {n}")'
+	@$(UV) run python -c 'import re; from pathlib import Path; p = Path("src/impersonate_proxy/__init__.py"); c = p.read_text(); m = re.search(r"^__version__\s*=\s*\"([^\"]+)\"", c, re.MULTILINE); v = m.group(1); parts = v.split("."); n = f"{parts[0]}.{parts[1]}.{int(parts[2])+1}"; p.write_text(re.sub(r"^__version__\s*=\s*\"[^\"]+\"", f"__version__ = \"{n}\"", c, flags=re.MULTILINE)); print(f"Bumped patch version: {v} -> {n}")'
 
 # Bump the minor version number (e.g. 0.1.0 -> 0.2.0)
 bump-minor:
-	@$(UV) run python -c 'import re; from pathlib import Path; p = Path("src/tls_impersonate_proxy/__init__.py"); c = p.read_text(); m = re.search(r"^__version__\s*=\s*\"([^\"]+)\"", c, re.MULTILINE); v = m.group(1); parts = v.split("."); n = f"{parts[0]}.{int(parts[1])+1}.0"; p.write_text(re.sub(r"^__version__\s*=\s*\"[^\"]+\"", f"__version__ = \"{n}\"", c, flags=re.MULTILINE)); print(f"Bumped minor version: {v} -> {n}")'
+	@$(UV) run python -c 'import re; from pathlib import Path; p = Path("src/impersonate_proxy/__init__.py"); c = p.read_text(); m = re.search(r"^__version__\s*=\s*\"([^\"]+)\"", c, re.MULTILINE); v = m.group(1); parts = v.split("."); n = f"{parts[0]}.{int(parts[1])+1}.0"; p.write_text(re.sub(r"^__version__\s*=\s*\"[^\"]+\"", f"__version__ = \"{n}\"", c, flags=re.MULTILINE)); print(f"Bumped minor version: {v} -> {n}")'
 
 # UV configuration for documentation (isolated to prevent package dev conflict)
-DOCS_UV = UV_PROJECT_ENVIRONMENT=$(HOME)/.local/venvs/tls-impersonate-proxy-docs UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy-docs UV_LINK_MODE=copy uv
+DOCS_UV = UV_PROJECT_ENVIRONMENT=$(HOME)/.local/venvs/impersonate-proxy-docs UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy-docs UV_LINK_MODE=copy uv
 
 # Sync documentation dependencies
 docs-sync:

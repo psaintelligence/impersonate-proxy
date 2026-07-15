@@ -7,7 +7,7 @@ from socketserver import ThreadingMixIn
 
 import requests
 
-from tls_impersonate_proxy import main as proxy
+from impersonate_proxy import main as proxy
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):

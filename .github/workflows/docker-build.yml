@@ -28,11 +28,11 @@ jobs:
         run: |
           TAG_VERSION="${GITHUB_REF#refs/tags/}"
           TAG_VERSION="${TAG_VERSION#v}"
-          PKG_VERSION=$(python -c "import sys; sys.path.insert(0, 'src'); import tls_impersonate_proxy; print(tls_impersonate_proxy.__version__)")
+          PKG_VERSION=$(python -c "import sys; sys.path.insert(0, 'src'); import impersonate_proxy; print(impersonate_proxy.__version__)")
           echo "Tag version: $TAG_VERSION"
           echo "Package version: $PKG_VERSION"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Pushed git tag '$TAG_VERSION' does not match package version '$PKG_VERSION' in tls-impersonate-proxy"
+            echo "::error::Pushed git tag '$TAG_VERSION' does not match package version '$PKG_VERSION' in impersonate-proxy"
             exit 1
           fi
 

@@ -28,17 +28,17 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Define default configuration environments
-ENV TLS_PROXY_HOST="0.0.0.0"
-ENV TLS_PROXY_PORT="8899"
-ENV TLS_PROXY_CA_DIR="/root/.config/tls-impersonate-proxy"
-ENV TLS_PROXY_IMPERSONATE="chrome"
-ENV TLS_PROXY_DEBUG="false"
+ENV IMPERSONATE_PROXY_HOST="0.0.0.0"
+ENV IMPERSONATE_PROXY_PORT="8899"
+ENV IMPERSONATE_PROXY_CA_DIR="/root/.config/impersonate-proxy"
+ENV IMPERSONATE_PROXY_IMPERSONATE="chrome"
+ENV IMPERSONATE_PROXY_DEBUG="false"
 
 # Expose proxy port
 EXPOSE 8899
 
 # Persistent volume for CA files
-VOLUME ["/root/.config/tls-impersonate-proxy"]
+VOLUME ["/root/.config/impersonate-proxy"]
 
 # Run the proxy CLI
-ENTRYPOINT ["tls-impersonate-proxy"]
+ENTRYPOINT ["impersonate-proxy"]

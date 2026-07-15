@@ -26,9 +26,9 @@ from socketserver import ThreadingMixIn
 import pytest
 import requests
 
-from tls_impersonate_proxy import main as proxy
+from impersonate_proxy import main as proxy
 
-logger = logging.getLogger("tls-impersonate-proxy-test")
+logger = logging.getLogger("impersonate-proxy-test")
 
 # ---------------------------------------------------------------------------
 # Shared fixtures and helpers

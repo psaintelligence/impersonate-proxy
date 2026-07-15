@@ -1,6 +1,6 @@
-# 🤖 tls-impersonate-proxy — Agent Directory (`.agents`)
+# 🤖 impersonate-proxy — Agent Directory (`.agents`)
 
-Welcome, AI Agent! This directory contains configurations, rules, contexts, specialized skills, and workflow definitions designed to help you understand the tls-impersonate-proxy repository, make high-quality changes, and verify your implementation.
+Welcome, AI Agent! This directory contains configurations, rules, contexts, specialized skills, and workflow definitions designed to help you understand the impersonate-proxy repository, make high-quality changes, and verify your implementation.
 
 ---
 
@@ -75,11 +75,11 @@ These represent specialized instructions to guide your implementation:
 2. **Consult Rules & Skills**: Follow [dev-directory.md](file:///home/ndejong/cyberco/projects/tls-impersonate-proxy/.agents/rules/dev-directory.md) and [environment.md](file:///home/ndejong/cyberco/projects/tls-impersonate-proxy/.agents/rules/environment.md). Check corresponding skill guidelines in the `skills/` folder if you are modifying core architecture, complex Python constructs, or security-sensitive code.
 3. **Execute & Test**: Make edits, and run the test suite using the isolated environment variables pattern detailed in [uv-commands.md](file:///home/ndejong/cyberco/projects/tls-impersonate-proxy/.agents/workflows/uv-commands.md):
    ```bash
-   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev pytest
+   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev pytest
    ```
 4. **Lint and Format**: Check code compliance and formatting using:
    ```bash
-   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev ruff check .
-   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev ruff check --fix .
+   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev ruff check .
+   UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev ruff check --fix .
    ```
 5. **Verify**: Follow the [post-implementation-verification.md](file:///home/ndejong/cyberco/projects/tls-impersonate-proxy/.agents/workflows/post-implementation-verification.md) steps before submitting code changes.

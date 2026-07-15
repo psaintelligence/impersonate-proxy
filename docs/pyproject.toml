@@ -1,7 +1,7 @@
 [project]
-name = "tls-impersonate-proxy-docs"
+name = "impersonate-proxy-docs"
 version = "0.1.0"
-description = "tls-impersonate-proxy Docs"
+description = "impersonate-proxy Docs"
 readme = "README.md"
 requires-python = ">=3.12, <4"
 
@@ -45,8 +45,8 @@ dependencies = [
     "typing-extensions",
     "urllib3",
     "watchdog",
-    "tls-impersonate-proxy",
+    "impersonate-proxy",
 ]
 
 [tool.uv.sources]
-tls-impersonate-proxy = { path = ".." }
+impersonate-proxy = { path = ".." }

@@ -9,7 +9,7 @@ from http.server import HTTPServer
 import pytest
 import requests
 
-from tls_impersonate_proxy import main as tls_impersonate_proxy
+from impersonate_proxy import main as impersonate_proxy
 
 
 def _get_free_port() -> int:
@@ -33,8 +33,8 @@ class TestProxyLive:
             daemon_threads = True
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            tls_impersonate_proxy._init_ca(tmpdir)
-            server = ThreadingHTTPServer(("127.0.0.1", port), tls_impersonate_proxy.ProxyHandler)
+            impersonate_proxy._init_ca(tmpdir)
+            server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
 
