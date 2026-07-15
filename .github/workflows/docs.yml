@@ -1,0 +1,38 @@
+name: docs
+
+on:
+  push:
+    branches: ['main', 'dev']
+
+env:
+  PYTHON_VERSION: "3.12"
+
+permissions:
+  contents: write
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    environment: github-pages
+
+    steps:
+      - name: Checkout latest
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: |
+          cd docs
+          uv sync
+
+      - name: Build docs and deploy
+        run: |
+          cd docs
+          uv run mkdocs gh-deploy --force

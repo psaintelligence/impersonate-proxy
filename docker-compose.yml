@@ -1,0 +1,24 @@
+
+volumes:
+  ca-certs:
+    name: tls-proxy-ca-certs
+
+
+services:
+
+  tls-impersonate-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tls-impersonate-proxy
+    ports:
+      - "8899:8899"
+    environment:
+      - TLS_PROXY_HOST=0.0.0.0
+      - TLS_PROXY_PORT=8899
+      - TLS_PROXY_IMPERSONATE=chrome
+      - TLS_PROXY_DEBUG=false
+      - TLS_PROXY_CA_DIR=/certs
+    volumes:
+      - ca-certs:/certs
+    restart: unless-stopped

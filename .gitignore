@@ -5,3 +5,7 @@ venv
 *.egg-info/
 .ruff_cache/
 .pytest_cache/
+
+_dev/
+.idea/
+build/

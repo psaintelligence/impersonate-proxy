@@ -1,4 +1,4 @@
-"""Tests for tls-impersonate-proxy."""
+"""Integration tests for plain HTTP proxy operations using mock servers."""
 
 import concurrent.futures
 import socket
@@ -10,10 +10,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from tls_impersonate_proxy import tls_impersonate_proxy
-
-
-# --- Helpers ---
+from tls_impersonate_proxy import main as tls_impersonate_proxy
 
 
 class MockUpstreamHandler(BaseHTTPRequestHandler):
@@ -25,7 +22,7 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/redirect":
             self.send_response(302)
-            self.send_header("Location", "http://127.0.0.1:{}/redirected".format(self.server.server_port))
+            self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/redirected")
             self.end_headers()
             return
 
@@ -90,8 +87,13 @@ def proxy_server():
     def _mock_do_request(method, url, headers, body, stream=False):
         try:
             return requests.request(
-                method=method, url=url, headers=headers,
-                data=body, timeout=10, allow_redirects=False, stream=stream,
+                method=method,
+                url=url,
+                headers=headers,
+                data=body,
+                timeout=10,
+                allow_redirects=False,
+                stream=stream,
             )
         except Exception:
             return None
@@ -116,102 +118,6 @@ def proxy_server():
 
         yield proxy_url
         server.shutdown()
-
-
-# --- Unit Tests ---
-
-
-class TestHostPortParsing:
-    def test_standard_host_port(self):
-        path = "example.com:443"
-        host, _, port_str = path.rpartition(":")
-        host = host.strip("[]")
-        assert host == "example.com"
-        assert int(port_str) == 443
-
-    def test_ipv6_host_port(self):
-        path = "[::1]:443"
-        host, _, port_str = path.rpartition(":")
-        host = host.strip("[]")
-        assert host == "::1"
-        assert int(port_str) == 443
-
-    def test_custom_port(self):
-        path = "example.com:8080"
-        host, _, port_str = path.rpartition(":")
-        host = host.strip("[]")
-        assert host == "example.com"
-        assert int(port_str) == 8080
-
-
-class TestCertCache:
-    def test_init_ca(self):
-        tls_impersonate_proxy._init_ca()
-        assert tls_impersonate_proxy._CA_KEY is not None
-        assert tls_impersonate_proxy._CA_CERT is not None
-
-    def test_get_cert_for_host_caches(self):
-        tls_impersonate_proxy._init_ca()
-        tls_impersonate_proxy._HOST_CERT_CACHE.clear()
-        ctx1 = tls_impersonate_proxy._get_cert_for_host("test.example.com")
-        ctx2 = tls_impersonate_proxy._get_cert_for_host("test.example.com")
-        assert ctx1 is ctx2
-
-    def test_get_cert_for_host_different_hosts(self):
-        tls_impersonate_proxy._init_ca()
-        tls_impersonate_proxy._HOST_CERT_CACHE.clear()
-        ctx1 = tls_impersonate_proxy._get_cert_for_host("host1.example.com")
-        ctx2 = tls_impersonate_proxy._get_cert_for_host("host2.example.com")
-        assert ctx1 is not ctx2
-
-    def test_get_cert_for_ip_address(self):
-        tls_impersonate_proxy._init_ca()
-        tls_impersonate_proxy._HOST_CERT_CACHE.clear()
-        ctx = tls_impersonate_proxy._get_cert_for_host("1.2.3.4")
-        assert ctx is not None
-
-    def test_cache_eviction(self):
-        tls_impersonate_proxy._init_ca()
-        tls_impersonate_proxy._HOST_CERT_CACHE.clear()
-        old_max = tls_impersonate_proxy._HOST_CERT_MAX
-        tls_impersonate_proxy._HOST_CERT_MAX = 3
-        try:
-            for i in range(5):
-                tls_impersonate_proxy._get_cert_for_host(f"host{i}.example.com")
-            assert len(tls_impersonate_proxy._HOST_CERT_CACHE) == 3
-            assert "host0.example.com" not in tls_impersonate_proxy._HOST_CERT_CACHE
-            assert "host4.example.com" in tls_impersonate_proxy._HOST_CERT_CACHE
-        finally:
-            tls_impersonate_proxy._HOST_CERT_MAX = old_max
-
-
-class TestSessionManagement:
-    def test_get_session_returns_session(self):
-        session = tls_impersonate_proxy._get_session()
-        assert session is not None
-
-    def test_get_session_same_thread(self):
-        s1 = tls_impersonate_proxy._get_session()
-        s2 = tls_impersonate_proxy._get_session()
-        assert s1 is s2
-
-    def test_get_session_different_threads(self):
-        sessions = []
-
-        def get_session():
-            sessions.append(tls_impersonate_proxy._get_session())
-
-        t1 = threading.Thread(target=get_session)
-        t2 = threading.Thread(target=get_session)
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-        assert len(sessions) == 2
-        assert sessions[0] is not sessions[1]
-
-
-# --- Integration Tests (mock upstream) ---
 
 
 class TestProxyHTTP:
@@ -292,50 +198,3 @@ class TestProxyHTTP:
         for status, text in results:
             assert status == 200
             assert text.startswith("GET /concurrent-")
-
-
-# --- Live Integration Test ---
-
-
-@pytest.mark.live
-class TestProxyLive:
-    """Tests that hit real URLs. Run with: pytest -m live"""
-
-    def test_fetch_kosmi_webm(self):
-        """Fetch a real video file through the proxy using curl_cffi."""
-        port = _get_free_port()
-        proxy_url = f"http://127.0.0.1:{port}"
-
-        from socketserver import ThreadingMixIn
-
-        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
-
-        tls_impersonate_proxy._init_ca()
-        server = ThreadingHTTPServer(("127.0.0.1", port), tls_impersonate_proxy.ProxyHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-
-        for _ in range(50):
-            try:
-                s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-                s.close()
-                break
-            except OSError:
-                time.sleep(0.1)
-
-        try:
-            resp = requests.get(
-                "http://kosmi.io/kosmishort.webm",
-                proxies={"http": proxy_url},
-                timeout=30,
-            )
-            assert resp.status_code == 200
-            assert len(resp.content) > 10000
-            assert resp.headers.get("Content-Type") in (
-                "video/webm",
-                "application/octet-stream",
-                None,
-            ) or "webm" in resp.headers.get("Content-Type", "")
-        finally:
-            server.shutdown()

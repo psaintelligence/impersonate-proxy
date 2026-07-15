@@ -1,0 +1,56 @@
+name: project-tests
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches: ["main"]
+  workflow_call:
+
+jobs:
+  project-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: |
+          UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
+          UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+          UV_LINK_MODE=copy \
+          uv sync --extra dev
+
+      - name: Lint and Format check
+        run: |
+          UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
+          UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+          UV_LINK_MODE=copy \
+          uv run ruff check src tests && uv run ruff format --check src tests
+
+      - name: Run tests
+        run: |
+          UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
+          UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+          UV_LINK_MODE=copy \
+          uv run pytest tests/ -v
+
+      - name: Verify CLI
+        run: |
+          UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/tls-impersonate-proxy \
+          UV_CACHE_DIR=/tmp/.uv-cache-tls-impersonate-proxy \
+          UV_LINK_MODE=copy \
+          uv run tls-impersonate-proxy --help

@@ -1,0 +1,145 @@
+# Navigation
+# ===
+nav:
+  - Home: index.md
+  - Installation: install.md
+  - How It Works: workflow.md
+  - License: license.md
+
+# Site
+# ===
+docs_dir: docs
+site_name: TLS Impersonate Proxy
+site_url: https://ndejong.github.io/tls-impersonate-proxy/
+site_author: ndejong
+site_description: HTTP/HTTPS proxy that impersonates browser TLS fingerprints (JA3/JA4) using curl_cffi
+
+# Repo
+# ===
+repo_url: https://github.com/ndejong/tls-impersonate-proxy
+repo_name: ndejong/tls-impersonate-proxy
+
+
+# Copyright
+# ===
+copyright: Copyright &copy; 2026 ndejong
+
+
+# Theme
+# ===
+theme:
+  name: material
+  language: en
+
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+  icon:
+    logo: material/lan-pending
+
+  features:
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+
+# Additional configuration
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ndejong/tls-impersonate-proxy
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/tls-impersonate-proxy/
+
+
+# Extras
+# ===
+extra_css:
+  - assets/css/extra.css
+extra_javascript:
+  - assets/js/extra.js
+
+
+# Plugins
+# ===
+plugins:
+  - search
+  - redirects:
+      redirect_maps:
+        #old-path/index.md: new-path/index.md
+  - minify:
+      minify_js: true
+      minify_css: true
+      minify_html: true
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [../src]
+          options:
+            heading_level: 3
+            show_root_heading: true
+            show_root_full_path: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+            separate_signature: true
+            show_signature_annotations: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - meta
+
+  - toc:
+      permalink: true
+
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.tilde
+
+  - pymdownx.arithmatex:
+      generic: true
+
+  - pymdownx.betterem:
+      smart_enable: all
+
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+
+  - pymdownx.emoji:  # https://squidfunk.github.io/mkdocs-material/reference/icons-emojis
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+#  - pymdownx.magiclink:
+#      repo_url_shorthand: true
+#      user: squidfunk
+#      repo: mkdocs-material
+
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+  - pymdownx.tabbed:
+      alternate_style: true
+
+  - pymdownx.tasklist:
+      custom_checkbox: true
