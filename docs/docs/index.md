@@ -1,6 +1,15 @@
-# Impersonate Proxy
+# PSA Intelligence Impersonate Proxy
 
-HTTP/HTTPS proxy that impersonates browser TLS fingerprints (JA3/JA4) using `curl_cffi` to defeat CDN fingerprint-based blocking of non-browser clients.
+[![pypi](https://img.shields.io/pypi/v/impersonate-proxy.svg)](https://pypi.org/project/impersonate-proxy/)
+[![python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://github.com/psaintelligence/impersonate-proxy/)
+[![build tests](https://github.com/psaintelligence/impersonate-proxy/actions/workflows/project-tests.yml/badge.svg)](https://github.com/psaintelligence/impersonate-proxy/actions/workflows/project-tests.yml)
+[![license](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/psaintelligence/impersonate-proxy/blob/main/LICENSE)
+<img src="assets/img/logo.jpg" align="right" width="140" style="margin-left: 20px; margin-bottom: 20px;" alt="impersonate-proxy logo">
+
+**HTTP/HTTPS proxy that impersonates browser TLS fingerprints (JA3/JA4) using `curl_cffi` to manage CDN fingerprint-based blocking of non-browser clients.**
+
+!!! note "Fork Attribution"
+    This project is a fork of the original source project [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) maintained at [psaintelligence/impersonate-proxy](https://github.com/psaintelligence/impersonate-proxy).
 
 ---
 
@@ -51,8 +60,3 @@ curl -x http://127.0.0.1:8899 https://cloudflare.com
 
 - **[Installation Guide](install.md)**: System setup, CLI parameters, and Docker integrations.
 - **[How It Works](workflow.md)**: Deep dive into the interception pipeline, session pool, and header decoration mechanism.
-
----
-
-!!! note "Fork Attribution"
-    This project is a fork of the original source project [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) maintained at [psaintelligence/impersonate-proxy](https://github.com/psaintelligence/impersonate-proxy).
