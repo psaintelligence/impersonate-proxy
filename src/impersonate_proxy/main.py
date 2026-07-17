@@ -38,6 +38,7 @@ import ssl
 import sys
 import tempfile
 import threading
+import urllib.parse
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
@@ -61,6 +62,7 @@ _SESSION_POOL: queue.Queue[cffi_requests.Session] = queue.Queue(maxsize=_SESSION
 _IMPERSONATE: str = os.environ.get("IMPERSONATE_PROXY_IMPERSONATE", "chrome")
 _ENRICH_HEADERS: bool = os.environ.get("IMPERSONATE_PROXY_ENRICH_HEADERS", "true").lower() not in ("false", "0", "no")
 _DEBUG: bool = False
+_QUIET: bool = os.environ.get("IMPERSONATE_PROXY_QUIET", "false").lower() in ("true", "1", "yes")
 logger: logging.Logger = logging.getLogger("impersonate-proxy")
 
 _SENSITIVE_HEADERS: set[str] = {
@@ -87,6 +89,18 @@ def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
         else:
             sanitized[k] = v
     return sanitized
+
+
+def _get_client_netblock(ip_str: str) -> str:
+    """Return the /24 netblock for IPv4 or /64 netblock for IPv6."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if ip.version == 4:
+            return str(ipaddress.ip_network(f"{ip_str}/24", strict=False))
+        else:
+            return str(ipaddress.ip_network(f"{ip_str}/64", strict=False))
+    except Exception:
+        return ip_str
 
 
 def _init_ca(ca_dir: str | None = None) -> None:
@@ -443,11 +457,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Bad host:port")
             return
 
+        client_ip = self.client_address[0]
+        netblock = _get_client_netblock(client_ip)
+        if not _QUIET:
+            logger.info(f"CONNECT request from {netblock} to {host}")
+
         self.send_response(200, "Connection established")
         self.end_headers()
 
         if _CA_KEY is None:
-            logger.info(f"CONNECT {_show_identifying(f'{host}:{port}')} (raw tunnel, no impersonation)")
+            if not _QUIET:
+                logger.info(f"CONNECT {_show_identifying(f'{host}:{port}')} (raw tunnel, no impersonation)")
             _raw_tunnel(self.connection, host, port)
             self.close_connection = True
             return
@@ -546,7 +566,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
                             wfile.write(b"\r\n")
                     wfile.write(b"0\r\n\r\n")
                     wfile.flush()
-                    if status_code >= 400 or _DEBUG:
+                    if (status_code >= 400 or _DEBUG) and not _QUIET:
                         logger.info(f"CONNECT-MITM {method} {_show_identifying(url)} -> {status_code}")
                 finally:
                     r.close()
@@ -575,6 +595,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
             logger.warning(f"HTTP Proxy bad request: {_show_identifying(url)}")
             self.send_error(400, "Absolute URL required")
             return
+
+        client_ip = self.client_address[0]
+        netblock = _get_client_netblock(client_ip)
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or ""
+        if not _QUIET:
+            logger.info(f"{self.command} request from {netblock} to {host}")
 
         skip = {
             "host",
@@ -634,7 +661,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         self.wfile.write(b"\r\n")
                 self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
-            logger.info(f"HTTP Proxy {self.command} {_show_identifying(url)} -> {resp.status_code}")
+            if not _QUIET:
+                logger.info(f"HTTP Proxy {self.command} {_show_identifying(url)} -> {resp.status_code}")
         finally:
             resp.close()
 
@@ -652,11 +680,13 @@ def run(
     ca_dir: str | None = None,
     enrich_headers: bool = True,
     debug: bool = False,
+    quiet: bool = False,
 ) -> None:
-    global _IMPERSONATE, _ENRICH_HEADERS, _DEBUG
+    global _IMPERSONATE, _ENRICH_HEADERS, _DEBUG, _QUIET
     _IMPERSONATE = impersonate
     _ENRICH_HEADERS = enrich_headers
     _DEBUG = debug
+    _QUIET = quiet
 
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
@@ -676,7 +706,12 @@ def run(
         f"impersonate-proxy listening on {host}:{port} "
         f"(impersonating {impersonate}, enrich_headers={enrich_headers}, debug={debug})"
     )
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received, shutting down...")
+    finally:
+        server.server_close()
 
 
 def main() -> None:
@@ -687,38 +722,45 @@ def main() -> None:
         "-p",
         type=int,
         default=int(os.environ.get("IMPERSONATE_PROXY_PORT", "8899")),
-        help="Port to listen on (default: 8899)",
+        help="Port to listen on (default: 8899 or IMPERSONATE_PROXY_PORT)",
     )
     parser.add_argument(
         "--host",
         "-H",
         default=os.environ.get("IMPERSONATE_PROXY_HOST", "127.0.0.1"),
-        help="Host to bind to (default: 127.0.0.1)",
+        help="Host to bind to (default: 127.0.0.1 or IMPERSONATE_PROXY_HOST)",
     )
     parser.add_argument(
         "--impersonate",
         "-i",
         default=os.environ.get("IMPERSONATE_PROXY_IMPERSONATE", "chrome"),
-        help="Browser to impersonate (default: chrome)",
-    )
-    parser.add_argument(
-        "--ca-dir",
-        "-c",
-        default=os.environ.get("IMPERSONATE_PROXY_CA_DIR"),
-        help="Directory to store/load CA certificate and private key",
+        help="Browser to impersonate (chrome, firefox, etc. Default: chrome or IMPERSONATE_PROXY_IMPERSONATE)",
     )
     parser.add_argument(
         "--no-enrich-headers",
         action="store_true",
         default=os.environ.get("IMPERSONATE_PROXY_ENRICH_HEADERS", "true").lower() in ("false", "0", "no"),
-        help="Disable automatic browser header enrichment (User-Agent, Sec-Fetch-*, etc.)",
+        help="Disable automatic browser header enrichment (User-Agent, Sec-Fetch-*, etc.) or IMPERSONATE_PROXY_ENRICH_HEADERS=false",
+    )
+    parser.add_argument(
+        "--ca-dir",
+        "-c",
+        default=os.environ.get("IMPERSONATE_PROXY_CA_DIR"),
+        help="Directory to store/load CA certificate and key (default: ~/.config/impersonate-proxy or IMPERSONATE_PROXY_CA_DIR)",
     )
     parser.add_argument(
         "--debug",
         "-d",
         action="store_true",
         default=os.environ.get("IMPERSONATE_PROXY_DEBUG", "").lower() in ("true", "1", "yes"),
-        help="Enable verbose debug logging and show identifying details in logs",
+        help="Enable verbose debug logging (unredacts URLs/hosts in logs) or IMPERSONATE_PROXY_DEBUG=true",
+    )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        default=os.environ.get("IMPERSONATE_PROXY_QUIET", "false").lower() in ("true", "1", "yes"),
+        help="Disable logging of request traffic or IMPERSONATE_PROXY_QUIET=true",
     )
     args = parser.parse_args()
     run(
@@ -728,6 +770,7 @@ def main() -> None:
         ca_dir=args.ca_dir,
         enrich_headers=not args.no_enrich_headers,
         debug=args.debug,
+        quiet=args.quiet,
     )
 
 

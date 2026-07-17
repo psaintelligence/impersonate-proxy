@@ -198,3 +198,37 @@ class TestProxyHTTP:
         for status, text in results:
             assert status == 200
             assert text.startswith("GET /concurrent-")
+
+    def test_proxy_connection_logging(self, proxy_server, upstream_server, caplog):
+        """Proxy should log connection details in INFO mode."""
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="impersonate-proxy"):
+            resp = requests.get(f"{upstream_server}/hello", proxies={"http": proxy_server})
+            assert resp.status_code == 200
+
+            # Check for a log entry like: GET request from 127.0.0.0/24 to 127.0.0.1
+            log_found = False
+            for record in caplog.records:
+                if "request from" in record.message and "127.0.0.0/24" in record.message:
+                    log_found = True
+                    break
+            assert log_found, f"Expected connection log not found. Logs: {[r.message for r in caplog.records]}"
+
+    def test_proxy_quiet_logging(self, proxy_server, upstream_server, caplog):
+        """Proxy should not log traffic when _QUIET is True."""
+        import logging
+
+        impersonate_proxy._QUIET = True
+        try:
+            with caplog.at_level(logging.INFO, logger="impersonate-proxy"):
+                resp = requests.get(f"{upstream_server}/hello", proxies={"http": proxy_server})
+                assert resp.status_code == 200
+
+                # Verify no traffic logs are recorded
+                for record in caplog.records:
+                    assert "request from" not in record.message
+                    assert "HTTP Proxy" not in record.message
+                    assert "CONNECT" not in record.message
+        finally:
+            impersonate_proxy._QUIET = False

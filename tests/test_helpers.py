@@ -74,3 +74,16 @@ class TestRedactionUtilities:
         assert sanitized["X-Custom-Header"] == "value"
         assert sanitized["Authorization"] == "[redacted-sensitive]"
         assert sanitized["Cookie"] == "[redacted-sensitive]"
+
+
+class TestNetblockUtilities:
+    def test_ipv4_netblock(self):
+        assert impersonate_proxy._get_client_netblock("192.168.1.55") == "192.168.1.0/24"
+        assert impersonate_proxy._get_client_netblock("127.0.0.1") == "127.0.0.0/24"
+
+    def test_ipv6_netblock(self):
+        assert impersonate_proxy._get_client_netblock("::1") == "::/64"
+        assert impersonate_proxy._get_client_netblock("2001:db8:abcd:0012::1") == "2001:db8:abcd:12::/64"
+
+    def test_invalid_ip_fallback(self):
+        assert impersonate_proxy._get_client_netblock("invalid-ip") == "invalid-ip"

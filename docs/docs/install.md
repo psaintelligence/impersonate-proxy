@@ -10,14 +10,15 @@
 - Python 3.12 or newer
 - `pip` or `uv` package manager
 
-### Install via git
 ```bash
-pip install git+https://github.com/psaintelligence/impersonate-proxy.git
-```
+# Install via pipx from pypi
+pipx install impersonate-proxy
 
-Or using [uv](https://github.com/astral-sh/uv):
-```bash
+# Or install via uv from source
 uv pip install git+https://github.com/psaintelligence/impersonate-proxy.git
+
+# Start the proxy (default: 127.0.0.1:8899)
+impersonate-proxy
 ```
 
 ---
@@ -26,15 +27,10 @@ uv pip install git+https://github.com/psaintelligence/impersonate-proxy.git
 
 Running the proxy via Docker is recommended for isolated operation and to persist certificate states easily.
 
-### Local Docker Build
 ```bash
-# Build the Docker image
-docker build -t impersonate-proxy .
-
-# Run the proxy container (binding port 8899 and persisting CA certs)
 docker run --rm -p 8899:8899 \
-  -v impersonate-proxy-ca-certs:/root/.config/impersonate-proxy \
-  impersonate-proxy
+  -v /tmp/impersonate-certs:/root/.config/impersonate-proxy \
+  ghcr.io/psaintelligence/impersonate-proxy:latest
 ```
 
 ### Docker Compose
@@ -42,7 +38,7 @@ You can spin up the service in the background using docker-compose:
 ```yaml
 services:
   proxy:
-    build: .
+    image: ghcr.io/psaintelligence/impersonate-proxy:latest
     ports:
       - "8899:8899"
     environment:
@@ -65,6 +61,8 @@ Run `impersonate-proxy --help` to view all available parameters:
 usage: impersonate-proxy [-h] [--port PORT] [--host HOST] [--impersonate IMPERSONATE]
                          [--ca-dir CA_DIR] [--no-enrich-headers] [--debug]
 
+HTTP/HTTPS proxy that impersonates browser TLS fingerprints
+
 options:
   -h, --help            show this help message and exit
   --port PORT, -p PORT  Port to listen on (default: 8899 or IMPERSONATE_PROXY_PORT)
@@ -73,9 +71,8 @@ options:
                         Browser to impersonate (chrome, firefox, etc. Default: chrome or IMPERSONATE_PROXY_IMPERSONATE)
   --ca-dir CA_DIR, -c CA_DIR
                         Directory to store/load CA certificate and key (default: ~/.config/impersonate-proxy or IMPERSONATE_PROXY_CA_DIR)
-  --no-enrich-headers   Disable automatic browser header enrichment (User-Agent, Sec-Fetch-*, etc.)
-                        Can also be set via IMPERSONATE_PROXY_ENRICH_HEADERS=false
-  --debug, -d           Enable verbose debug logging (unredacts URLs/hosts in logs)
+  --no-enrich-headers   Disable automatic browser header enrichment (User-Agent, Sec-Fetch-*, etc.) or IMPERSONATE_PROXY_ENRICH_HEADERS=false
+  --debug, -d           Enable verbose debug logging (unredacts URLs/hosts in logs) or IMPERSONATE_PROXY_DEBUG=true
 ```
 
 ---

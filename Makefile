@@ -11,24 +11,24 @@ UV := UV_PROJECT_ENVIRONMENT=$(HOME)/.local/venvs/impersonate-proxy UV_CACHE_DIR
 # Show help menu of available commands
 help:
 	@echo "Available commands:"
-	@echo "  make setup        - Create virtual environment and sync dependencies"
-	@echo "  make sync         - Sync python dependencies (dev environment)"
+	@echo "  make setup         - Create virtual environment and sync dependencies"
+	@echo "  make sync          - Sync python dependencies (dev environment)"
 	@echo "  make test          - Run offline unit and integration tests"
 	@echo "  make test-verbose  - Run offline tests with verbose output"
 	@echo "  make test-live     - Run basic live tests (hit real URLs)"
 	@echo "  make test-extended - Run extended fingerprint/bot-detection live tests"
 	@echo "  make benchmark     - Run concurrency performance benchmark"
-	@echo "  make lint         - Run linting checks (ruff)"
-	@echo "  make format       - Format code (ruff)"
-	@echo "  make lint-fix     - Auto-fix linting and formatting issues"
-	@echo "  make typecheck    - Run type checking (basedpyright)"
-	@echo "  make build        - Build wheel and source distributions"
-	@echo "  make bump-patch   - Bump the patch version number (e.g. 0.1.0 -> 0.1.1)"
-	@echo "  make bump-minor   - Bump the minor version number (e.g. 0.1.0 -> 0.2.0)"
-	@echo "  make clean        - Clean build and cache artifacts"
-	@echo "  make docs-sync    - Sync documentation dependencies"
-	@echo "  make docs-build   - Build documentation site"
-	@echo "  make docs-serve   - Serve documentation locally"
+	@echo "  make lint          - Run linting checks (ruff)"
+	@echo "  make format        - Format code (ruff)"
+	@echo "  make lint-fix      - Auto-fix linting and formatting issues"
+	@echo "  make typecheck     - Run type checking (basedpyright)"
+	@echo "  make build         - Build wheel and source distributions"
+	@echo "  make bump-patch    - Bump the patch version number (e.g. 0.1.0 -> 0.1.1)"
+	@echo "  make bump-minor    - Bump the minor version number (e.g. 0.1.0 -> 0.2.0)"
+	@echo "  make clean         - Clean build and cache artifacts"
+	@echo "  make docs-sync     - Sync documentation dependencies"
+	@echo "  make docs-build    - Build documentation site"
+	@echo "  make docs-serve    - Serve documentation locally"
 
 # Create virtual environment and sync dependencies
 setup:
@@ -40,6 +40,10 @@ setup:
 # Sync Python dependencies
 sync:
 	$(UV) sync --extra dev
+
+# Run the app
+run:
+	$(UV) run python -m impersonate_proxy.main
 
 # Run tests
 test:
