@@ -11,6 +11,9 @@ HTTP/HTTPS proxy that impersonates browser TLS fingerprints using [curl_cffi](ht
 !!! note "Attribution"
     This project started as a fork of [hauxir/tls-impersonate-proxy](https://github.com/hauxir/tls-impersonate-proxy) and has now evolved beyond a pull request to merge.  The impersonate-proxy project is maintained at [psaintelligence/impersonate-proxy](https://github.com/psaintelligence/impersonate-proxy).
 
+Pypi: [pypi.org/project/impersonate-proxy](https://pypi.org/project/impersonate-proxy/)
+GHCR: [github.com/psaintelligence/impersonate-proxy/pkgs/container](https://github.com/psaintelligence/impersonate-proxy/pkgs/container/impersonate-proxy)
+
 ---
 
 ## Quick Start (Docker)
