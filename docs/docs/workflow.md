@@ -106,33 +106,45 @@ When a request arrives at the proxy, `_prepare_headers()` dispatches on the acti
 
 ### Chrome profile headers (enrich injected / override replaced with)
 
+Values sourced from the [curl-impersonate captured signature for Chrome 142](https://github.com/lexiforest/curl-impersonate/blob/main/tests/signatures/chrome_142.0.7444.176.yaml),
+aligned with curl_cffi's default `chrome` target (`chrome146` as of curl_cffi >= 0.7).
+The OS is macOS to match the TLS fingerprint's claimed OS — using Windows here
+would create a TLS-vs-headers OS mismatch detectable by WAFs.
+
 ```
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
-Accept: text/html,application/xhtml+xml,...,*/*;q=0.8
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7
 Accept-Language: en-US,en;q=0.9
 Accept-Encoding: gzip, deflate, br, zstd
 Upgrade-Insecure-Requests: 1
-Sec-Ch-Ua: "Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"
+Sec-Ch-Ua: "Chromium";v="146", "Google Chrome";v="146", "Not_A Brand";v="99"
 Sec-Ch-Ua-Mobile: ?0
-Sec-Ch-Ua-Platform: "Windows"
+Sec-Ch-Ua-Platform: "macOS"
 Sec-Fetch-Dest: document
 Sec-Fetch-Mode: navigate
 Sec-Fetch-Site: none
 Sec-Fetch-User: ?1
+Priority: u=0, i
 ```
 
 ### Firefox profile headers
 
+Values sourced from the [curl-impersonate captured signature for Firefox 144](https://github.com/lexiforest/curl-impersonate/blob/main/tests/signatures/firefox_144.0.0_linux.yaml),
+aligned with curl_cffi's default `firefox` target (`firefox147`). Modern Firefox
+(>= 135) also advertises `zstd` and sends the `Priority` and `TE: trailers` headers.
+
 ```
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0
-Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
 Accept-Language: en-US,en;q=0.5
-Accept-Encoding: gzip, deflate, br
+Accept-Encoding: gzip, deflate, br, zstd
 Upgrade-Insecure-Requests: 1
 Sec-Fetch-Dest: document
 Sec-Fetch-Mode: navigate
 Sec-Fetch-Site: none
 Sec-Fetch-User: ?1
+Priority: u=0, i
+TE: trailers
 ```
 
 ### Choosing a mode

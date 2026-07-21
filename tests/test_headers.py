@@ -96,7 +96,7 @@ class TestEnrichMode:
     def test_replaces_non_browser_ua(self, client_headers_minimal):
         out = proxy._prepare_headers(client_headers_minimal, "chrome", mode="enrich")
         assert out["User-Agent"] != "python-httpx/0.27.0"
-        assert "Chrome/120" in out["User-Agent"]
+        assert "Chrome/146" in out["User-Agent"]
 
     def test_preserves_client_accept(self, client_headers_minimal):
         out = proxy._prepare_headers(client_headers_minimal, "chrome", mode="enrich")
@@ -113,19 +113,23 @@ class TestEnrichMode:
         assert out["Sec-Fetch-Dest"] == "document"
         assert out["Sec-Fetch-Mode"] == "navigate"
         assert out["Sec-Fetch-Site"] == "none"
-        assert out["Sec-Ch-Ua"].startswith('"Not_A Brand"')
+        # Modern curl-impersonate signatures emit Sec-Ch-Ua starting with the
+        # "Chromium" brand token, not "Not_A Brand" as older Chrome did.
+        assert out["Sec-Ch-Ua"].startswith('"Chromium"')
+        assert 'v="146"' in out["Sec-Ch-Ua"]
 
     def test_firefox_profile_no_sec_ch_ua(self, client_headers_minimal):
         out = proxy._prepare_headers(client_headers_minimal, "firefox", mode="enrich")
         # Firefox does not send Sec-Ch-Ua
         assert "Sec-Ch-Ua" not in out
-        assert "Firefox/119" in out["User-Agent"]
+        assert "Firefox/147" in out["User-Agent"]
 
-    def test_firefox_accept_encoding_no_zstd(self, client_headers_minimal):
-        # Remove client Accept-Encoding to verify firefox default is injected
+    def test_firefox_accept_encoding_includes_zstd_when_missing(self, client_headers_minimal):
+        # Modern Firefox (>=135) also advertises zstd; remove client Accept-Encoding
+        # to verify the firefox default is injected with zstd included.
         headers = {k: v for k, v in client_headers_minimal.items() if k != "Accept-Encoding"}
         out = proxy._prepare_headers(headers, "firefox", mode="enrich")
-        assert out["Accept-Encoding"] == "gzip, deflate, br"
+        assert out["Accept-Encoding"] == "gzip, deflate, br, zstd"
 
     def test_chrome_accept_encoding_includes_zstd_when_missing(self):
         headers = {"Host": "example.com", "User-Agent": "curl/8.0"}
@@ -164,7 +168,8 @@ class TestOverrideMode:
 
     def test_replaces_accept_encoding_firefox(self, client_headers_searxng_like):
         out = proxy._prepare_headers(client_headers_searxng_like, "firefox", mode="override")
-        assert out["Accept-Encoding"] == "gzip, deflate, br"
+        # Modern Firefox (>=135) advertises zstd alongside gzip/deflate/br.
+        assert out["Accept-Encoding"] == "gzip, deflate, br, zstd"
 
     def test_drops_cache_control(self, client_headers_searxng_like):
         out = proxy._prepare_headers(client_headers_searxng_like, "chrome", mode="override")
@@ -187,7 +192,8 @@ class TestOverrideMode:
     def test_replaces_sec_headers(self, client_headers_searxng_like):
         out = proxy._prepare_headers(client_headers_searxng_like, "chrome", mode="override")
         assert out["Sec-Fetch-Dest"] == "document"
-        assert out["Sec-Ch-Ua"].startswith('"Not_A Brand"')
+        assert out["Sec-Ch-Ua"].startswith('"Chromium"')
+        assert 'v="146"' in out["Sec-Ch-Ua"]
 
     def test_preserves_authorization_cookie_referer(self, client_headers_with_proxy_leak):
         out = proxy._prepare_headers(client_headers_with_proxy_leak, "chrome", mode="override")
@@ -203,8 +209,8 @@ class TestOverrideMode:
     def test_replaces_real_browser_ua_with_profile(self, client_headers_searxng_like):
         """Override mode replaces even valid browser UAs to match the impersonated profile."""
         out = proxy._prepare_headers(client_headers_searxng_like, "chrome", mode="override")
-        # The original was Firefox 115; override mode must install Chrome 120 UA
-        assert "Chrome/120" in out["User-Agent"]
+        # The original was Firefox 115; override mode must install Chrome 146 UA
+        assert "Chrome/146" in out["User-Agent"]
         assert "Firefox/115" not in out["User-Agent"]
 
     def test_override_preserves_custom_x_headers(self):
@@ -374,8 +380,8 @@ class TestCombinedModesAndStrip:
     "ua,expected",
     [
         ("", True),
-        ("Mozilla/5.0 (X11) Gecko/20100101 Firefox/119.0", False),
-        ("Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36", False),
+        ("Mozilla/5.0 (X11) Gecko/20100101 Firefox/147.0", False),
+        ("Mozilla/5.0 (Windows NT 10.0) Chrome/146.0 Safari/537.36", False),
         ("curl/8.0", True),
         ("python-requests/2.31", True),
         ("python-httpx/0.27.0", True),
@@ -406,7 +412,7 @@ def test_profile_defaults_fireix():
     defaults = proxy._profile_defaults("firefox131")
     # Any firefox-prefixed profile resolves to the firefox defaults
     assert "Sec-Ch-Ua" not in defaults
-    assert defaults["Accept-Encoding"] == "gzip, deflate, br"
+    assert defaults["Accept-Encoding"] == "gzip, deflate, br, zstd"
 
 
 def test_profile_defaults_unknown_falls_back_to_chrome():

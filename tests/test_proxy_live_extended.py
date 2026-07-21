@@ -151,18 +151,26 @@ def _get_unproxied(url: str, use_chrome_headers: bool = False, timeout: int = 15
     """Issue a GET request directly (without proxy) and return the status code."""
     headers = None
     if use_chrome_headers:
+        # Mirrors impersonate-proxy's chrome profile defaults (Chrome 146 on macOS,
+        # sourced from curl-impersonate signatures).
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,"
+                "image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            ),
             "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
             "Upgrade-Insecure-Requests": "1",
-            "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            "Sec-Ch-Ua": '"Chromium";v="146", "Google Chrome";v="146", "Not_A Brand";v="99"',
             "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Ch-Ua-Platform": '"macOS"',
             "Sec-Fetch-Dest": "document",
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "none",
             "Sec-Fetch-User": "?1",
+            "Priority": "u=0, i",
         }
     try:
         resp = requests.get(url, headers=headers, timeout=timeout)
