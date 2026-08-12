@@ -96,16 +96,10 @@ def _chrome(
     ``Sec-CH-UA-Platform`` header (e.g. ``Windows``). These differ — a UA that
     says Win64 must pair with ``Sec-CH-UA-Platform: "Windows"``.
     """
-    ua = (
-        f"Mozilla/5.0 ({platform_ua}) AppleWebKit/537.36 "
-        f"(KHTML, like Gecko) Chrome/{build} Safari/537.36"
-    )
+    ua = f"Mozilla/5.0 ({platform_ua}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{build} Safari/537.36"
     # Brand list mirrors what current Chrome emits; "Not/A)Brand" is a real brand.
-    short = f'"Not/A)Brand";v="{major-8}", "Chromium";v="{major}", "Google Chrome";v="{major}"'
-    full = (
-        f'"Not/A)Brand";v="{major-8}.0.0.0", '
-        f'"Chromium";v="{build}", "Google Chrome";v="{build}"'
-    )
+    short = f'"Not/A)Brand";v="{major - 8}", "Chromium";v="{major}", "Google Chrome";v="{major}"'
+    full = f'"Not/A)Brand";v="{major - 8}.0.0.0", "Chromium";v="{build}", "Google Chrome";v="{build}"'
     return BrowserFingerprint(
         user_agent=ua,
         sec_ch_ua=short,

@@ -94,7 +94,11 @@ class TestFingerprintCoherence:
         fp = fingerprint_for("chrome150")
         order = [h.strip() for h in fp.header_order.split(",")]
         # Canonical Chrome: full CH family grouped, UA before accept, fetch-* cluster.
-        assert order.index("sec-ch-ua") < order.index("sec-ch-ua-full-version-list") < order.index("sec-ch-ua-platform-version")
+        assert (
+            order.index("sec-ch-ua")
+            < order.index("sec-ch-ua-full-version-list")
+            < order.index("sec-ch-ua-platform-version")
+        )
         assert order.index("user-agent") < order.index("accept")
         assert order.index("sec-fetch-site") < order.index("sec-fetch-mode") < order.index("sec-fetch-dest")
 

@@ -16,7 +16,6 @@ services:
     environment:
       - IMPERSONATE_PROXY_HOST=0.0.0.0
       - IMPERSONATE_PROXY_PORT=8899
-      - IMPERSONATE_PROXY_IMPERSONATE=chrome
       - IMPERSONATE_PROXY_DEBUG=false
       - IMPERSONATE_PROXY_CA_DIR=/certs
     volumes:

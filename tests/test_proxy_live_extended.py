@@ -448,19 +448,34 @@ class TestFingerprintBypass:
             assert "sec-ch-ua-mobile" not in sent_headers
             assert "sec-ch-ua-platform" not in sent_headers
         else:
-            assert "Chrome/146.0.0.0" in ua, f"Expected Chrome/146 UA, got {ua!r}"
-            assert "Macintosh" in ua, f"Expected macOS UA (curl-impersonate signature), got {ua!r}"
+            # fingerprint-real injects a real (non-scrubbed) build + Windows platform.
+            assert "Chrome/150." in ua, f"Expected real Chrome/150 build UA, got {ua!r}"
+            assert "Chrome/150.0.0.0" not in ua, f"scrubbed build in UA: {ua!r}"
+            assert "Windows" in ua, f"Expected Windows UA (fingerprint platform), got {ua!r}"
             # curl_cffi injects the full sec-ch-ua-* set for Chrome. tls.peet.ws
             # returns these header values with double-quotes escaped as \", so
             # normalise before asserting.
-            assert "sec-ch-ua" in sent_headers, "sec-ch-ua should be injected by curl_cffi"
+            assert "sec-ch-ua" in sent_headers, "sec-ch-ua should be injected"
             sec_ch_ua = sent_headers["sec-ch-ua"].replace('\\"', '"')
-            assert '"Chromium";v="146"' in sec_ch_ua, f"Expected Chromium v=146 in sec-ch-ua, got {sec_ch_ua!r}"
+            assert '"Chromium";v="150"' in sec_ch_ua, f"Expected Chromium v=150 in sec-ch-ua, got {sec_ch_ua!r}"
+            assert '"Google Chrome";v="150"' in sec_ch_ua, f"Expected Google Chrome v=150 in sec-ch-ua, got {sec_ch_ua!r}"
             assert sent_headers.get("sec-ch-ua-mobile") == "?0"
             sec_ch_ua_platform = sent_headers.get("sec-ch-ua-platform", "")
-            assert "macOS" in sec_ch_ua_platform, (
-                f"Expected macOS platform in sec-ch-ua-platform, got {sec_ch_ua_platform!r}"
+            assert "Windows" in sec_ch_ua_platform, (
+                f"Expected Windows platform in sec-ch-ua-platform, got {sec_ch_ua_platform!r}"
             )
+            # Full CH family must be present and coherent (full-version-list agrees
+            # with the UA build) — this is the anti-tell guarantee.
+            assert "sec-ch-ua-full-version-list" in sent_headers, "missing sec-ch-ua-full-version-list"
+            assert "sec-ch-ua-platform-version" in sent_headers, "missing sec-ch-ua-platform-version"
+            assert "sec-ch-ua-arch" in sent_headers, "missing sec-ch-ua-arch"
+            assert "sec-ch-ua-bitness" in sent_headers, "missing sec-ch-ua-bitness"
+            full_list = sent_headers["sec-ch-ua-full-version-list"].replace('\\"', '"')
+            ua_build = ua.split("Chrome/")[1].split(" ")[0]
+            assert f'"Chromium";v="{ua_build}"' in full_list, (
+                f"full-version-list {full_list!r} does not match UA build {ua_build!r}"
+            )
+            assert f'"Google Chrome";v="{ua_build}"' in full_list
 
         # --- curl_cffi injects these (client sent bot tells / wrong values that were stripped) ---
         assert sent_headers.get("accept-encoding") == "gzip, deflate, br, zstd", (
