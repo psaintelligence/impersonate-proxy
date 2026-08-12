@@ -7,6 +7,7 @@ import queue
 from curl_cffi import requests as cffi_requests
 
 from impersonate_proxy.context import ProxyContext
+from impersonate_proxy.fingerprint import fingerprint_for
 from impersonate_proxy.header_filter import (
     cffi_defaults_headers,
     sanitize_headers,
@@ -48,6 +49,10 @@ def do_request(
             out_headers = dict(headers)
         else:
             out_headers = cffi_defaults_headers(headers)
+            if ctx.config.fingerprint_real:
+                fp = fingerprint_for(ctx.config.impersonate)
+                if fp is not None:
+                    out_headers.update(fp.to_headers())
         if ctx.config.strip_client_leak_headers:
             out_headers = strip_leak_headers(out_headers)
         logger.debug(

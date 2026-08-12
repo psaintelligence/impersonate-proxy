@@ -26,6 +26,7 @@ class ProxyConfig:
     ca_dir: str | None = None
     header_mode: str = "cffi-defaults"
     strip_client_leak_headers: bool = False
+    fingerprint_real: bool = True
     debug: bool = False
     quiet: bool = False
     upstream_proxy: str | None = None

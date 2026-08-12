@@ -20,6 +20,7 @@ _DEFAULT_RUN_CALL: dict[str, object] = {
     "session_pool_max": 32,
     "connect_timeout": 10.0,
     "read_timeout": 300.0,
+    "fingerprint_real": True,
 }
 
 
@@ -64,6 +65,7 @@ def test_config_env_vars():
             session_pool_max=32,
             connect_timeout=10.0,
             read_timeout=300.0,
+            fingerprint_real=True,
         )
 
 
@@ -102,6 +104,7 @@ def test_config_cli_args():
             session_pool_max=32,
             connect_timeout=10.0,
             read_timeout=300.0,
+            fingerprint_real=True,
         )
 
 
@@ -149,6 +152,7 @@ def test_config_cli_overrides_env():
             session_pool_max=32,
             connect_timeout=10.0,
             read_timeout=300.0,
+            fingerprint_real=True,
         )
 
 

@@ -93,6 +93,14 @@ class _ImpersonateProxyModule(types.ModuleType):
         _GLOBAL_CONTEXT.config.header_mode = val
 
     @property
+    def _FINGERPRINT_REAL(self) -> bool:
+        return _GLOBAL_CONTEXT.config.fingerprint_real
+
+    @_FINGERPRINT_REAL.setter
+    def _FINGERPRINT_REAL(self, val: bool) -> None:
+        _GLOBAL_CONTEXT.config.fingerprint_real = val
+
+    @property
     def _STRIP_CLIENT_LEAK_HEADERS(self) -> bool:
         return _GLOBAL_CONTEXT.config.strip_client_leak_headers
 
@@ -186,6 +194,12 @@ def _strip_leak_headers(headers: dict[str, str]) -> dict[str, str]:
     return strip_leak_headers(headers)
 
 
+def _fingerprint_for(target: str):
+    from impersonate_proxy.fingerprint import fingerprint_for
+
+    return fingerprint_for(target)
+
+
 def _do_request(method: str, url: str, headers: dict[str, str], body: bytes | None, allow_redirects: bool = False):
     return session_pool.do_request(_GLOBAL_CONTEXT, method, url, headers, body, allow_redirects=allow_redirects)
 
@@ -213,6 +227,7 @@ def run(
     session_pool_max: int = 32,
     connect_timeout: float = 10.0,
     read_timeout: float = 300.0,
+    fingerprint_real: bool = True,
     ctx: ProxyContext | None = None,
 ) -> None:
     target_ctx = ctx or _GLOBAL_CONTEXT
@@ -229,6 +244,7 @@ def run(
         session_pool_max=session_pool_max,
         connect_timeout=connect_timeout,
         read_timeout=read_timeout,
+        fingerprint_real=fingerprint_real,
     )
     target_ctx.session_pool_max = session_pool_max
 
@@ -321,6 +337,15 @@ def main() -> None:
         help="Upstream egress proxy URL (e.g. http://127.0.0.1:8080 or IMPERSONATE_PROXY_UPSTREAM_PROXY)",
     )
     parser.add_argument(
+        "--no-fingerprint-real",
+        action="store_false",
+        dest="fingerprint_real",
+        default=os.environ.get("IMPERSONATE_PROXY_FINGERPRINT_REAL", "true").lower() in ("true", "1", "yes"),
+        help="Disable injection of platform-coherent full-build UA + complete Sec-CH-UA "
+        "family on top of curl_cffi's TLS impersonation. On by default in cffi-defaults "
+        "mode. Or IMPERSONATE_PROXY_FINGERPRINT_REAL=false",
+    )
+    parser.add_argument(
         "--session-pool-max",
         type=int,
         default=int(os.environ.get("IMPERSONATE_PROXY_SESSION_POOL_MAX", "32")),
@@ -373,6 +398,7 @@ def main() -> None:
         session_pool_max=args.session_pool_max,
         connect_timeout=args.connect_timeout,
         read_timeout=args.read_timeout,
+        fingerprint_real=args.fingerprint_real,
     )
 
 
