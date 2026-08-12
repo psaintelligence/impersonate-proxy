@@ -1,13 +1,12 @@
 [build-system]
-requires = ["setuptools>=77.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-packages = ["impersonate_proxy"]
+[tool.hatch.version]
+path = "src/impersonate_proxy/__init__.py"
 
-[tool.setuptools.dynamic]
-version = {attr = "impersonate_proxy.__version__"}
+[tool.hatch.build.targets.wheel]
+packages = ["src/impersonate_proxy"]
 
 
 [project]
@@ -25,7 +24,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "curl_cffi>=0.7.0",
+    "curl_cffi>=0.16.1b1",
     "cryptography>=42.0.0",
 ]
 
