@@ -458,7 +458,9 @@ class TestFingerprintBypass:
             assert "sec-ch-ua" in sent_headers, "sec-ch-ua should be injected"
             sec_ch_ua = sent_headers["sec-ch-ua"].replace('\\"', '"')
             assert '"Chromium";v="150"' in sec_ch_ua, f"Expected Chromium v=150 in sec-ch-ua, got {sec_ch_ua!r}"
-            assert '"Google Chrome";v="150"' in sec_ch_ua, f"Expected Google Chrome v=150 in sec-ch-ua, got {sec_ch_ua!r}"
+            assert '"Google Chrome";v="150"' in sec_ch_ua, (
+                f"Expected Google Chrome v=150 in sec-ch-ua, got {sec_ch_ua!r}"
+            )
             assert sent_headers.get("sec-ch-ua-mobile") == "?0"
             sec_ch_ua_platform = sent_headers.get("sec-ch-ua-platform", "")
             assert "Windows" in sec_ch_ua_platform, (
