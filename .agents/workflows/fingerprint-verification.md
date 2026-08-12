@@ -59,6 +59,22 @@ Check `tests/test_fingerprint.py` — it asserts:
 - base `Sec-CH-UA` major == UA major (`test_base_sec_ch_ua_major_matches_ua`).
 - platform coherence (`test_platform_coherent`).
 - the full CH family is present (`test_headers_include_full_family`).
+- HTTP/2 header order is canonical (`test_header_order_canonical`).
+
+### 1b. HTTP/2 header order
+
+A real Chrome sends its headers in a canonical order (CH family grouped
+`sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, sec-ch-ua-arch,
+sec-ch-ua-bitness, sec-ch-ua-full-version-list, sec-ch-ua-model,
+sec-ch-ua-platform-version`, then `user-agent` before `accept`, then the
+`sec-fetch-*` cluster). curl_cffi's impersonation profile sets an *empty*
+`header_order`, so any extra headers you inject (the full CH family) would be
+appended in non-canonical order — a tell.
+
+The proxy fixes this by passing `extra_fp={"header_order": fp.header_order}`
+on every request when `--fingerprint-real` is active. The order lives on the
+`BrowserFingerprint` dataclass. If a service reflects non-canonical order, the
+`header_order` string is out of sync — update it and the test will catch it.
 
 ### 2. Live end-to-end (real proxy, real reflection service)
 
@@ -67,9 +83,16 @@ Check `tests/test_fingerprint.py` — it asserts:
 UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev pytest -m live tests/test_fingerprint.py -q
 ```
 
-This starts a real proxy instance and sends a request through it to
-`https://whoami.projects.psaintelligence.com/`, then asserts the reflected
-headers carry the full build + complete CH family.
+This starts a real proxy instance and sends requests through it:
+- `https://whoami.projects.psaintelligence.com/` — asserts the reflected
+  headers carry the full build + complete CH family.
+- `https://tls.peet.ws/api/all` — reads the true on-the-wire HTTP/2 HEADERS
+  frame and asserts the canonical order
+  (`test_http2_header_order_canonical`).
+
+Note: use `tls.peet.ws` (not whoami) for order checks — whoami serves
+HTTP/1.1, which reflects header *list* order, not the HTTP/2 compression frame
+order that fingerprint services inspect.
 
 ### 3. Manual TLS fingerprint (browserleaks)
 
@@ -112,6 +135,11 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
    defensively anyway to prevent major-skew. Keep that behavior.
 4. **Run all three verification steps above.** Step 1 catches header coherence;
    step 2 proves the full pipeline; step 3 confirms the TLS layer.
+5. **Header order.** New chrome targets may set their own (possibly empty)
+   `header_order` or change the header names curl_cffi emits. Ensure the
+   `header_order` on the `BrowserFingerprint` matches the real target's order
+   and that `test_http2_header_order_canonical` still passes. Remember the
+   order is enforced via `extra_fp={"header_order": ...}`, which is HTTP/2-only.
 
 ## Current version facts (as of last verification)
 
@@ -120,4 +148,8 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
   for `chrome150`).
 - Bare `chrome` resolves to `chrome150`, default fingerprint = Chrome 150
   `150.0.6585.24`, Windows / x64 / bitness 64 / `10.0.0`.
-- Verified coherent through the proxy against `whoami...` and `tls.browserleaks.com/json`.
+- Header order fixed via `extra_fp={"header_order": ...}` on every
+  `fingerprint_real` request; verified canonical on the wire via
+  `tls.peet.ws/api/all`.
+- Verified coherent through the proxy against `whoami...`,
+  `tls.browserleaks.com/json`, and `tls.peet.ws/api/all`.

@@ -13,13 +13,37 @@ Every fingerprint is *platform-coherent*: the User-Agent platform token matches
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Latest stable Chromium major this package is curated against. Keep in sync
 # with the newest supported curl_cffi chrome target (chrome150 as of 0.16.1b1).
 # For newer versions: extend _FINGERPRINTS with a new entry and bump DEFAULT_MAJOR.
 DEFAULT_MAJOR: int = 150
 DEFAULT_BUILD: str = "150.0.6585.24"
+
+# Canonical HTTP/2 header order for a desktop-Chrome navigation request. Mirrors
+# what genuine Chrome emits; unused headers are appended by curl_cffi after this
+# list rather than scattered, so mapping only the browser-shape headers suffices.
+_DEFAULT_HEADER_ORDER: str = (
+    "sec-ch-ua,"
+    "sec-ch-ua-mobile,"
+    "sec-ch-ua-platform,"
+    "sec-ch-ua-arch,"
+    "sec-ch-ua-bitness,"
+    "sec-ch-ua-full-version-list,"
+    "sec-ch-ua-model,"
+    "sec-ch-ua-platform-version,"
+    "upgrade-insecure-requests,"
+    "user-agent,"
+    "accept,"
+    "sec-fetch-site,"
+    "sec-fetch-mode,"
+    "sec-fetch-user,"
+    "sec-fetch-dest,"
+    "accept-encoding,"
+    "accept-language,"
+    "priority"
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +59,10 @@ class BrowserFingerprint:
     sec_ch_ua_arch: str
     sec_ch_ua_bitness: str
     sec_ch_ua_model: str = ""
+    # Canonical HTTP/2 header order for a real desktop-Chrome navigation request.
+    # curl_cffi sends headers not listed here appended after the listed order, so
+    # this covers the browser-shape headers; request-specific ones trail.
+    header_order: str = field(default=_DEFAULT_HEADER_ORDER)
 
     def to_headers(self) -> dict[str, str]:
         """Return this fingerprint as a header dict, dropping empty fields."""

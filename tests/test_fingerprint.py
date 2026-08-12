@@ -90,6 +90,14 @@ class TestFingerprintCoherence:
         headers = fp.to_headers()
         assert "Sec-CH-UA-Model" not in headers  # desktop Chrome sends empty model
 
+    def test_header_order_canonical(self):
+        fp = fingerprint_for("chrome150")
+        order = [h.strip() for h in fp.header_order.split(",")]
+        # Canonical Chrome: full CH family grouped, UA before accept, fetch-* cluster.
+        assert order.index("sec-ch-ua") < order.index("sec-ch-ua-full-version-list") < order.index("sec-ch-ua-platform-version")
+        assert order.index("user-agent") < order.index("accept")
+        assert order.index("sec-fetch-site") < order.index("sec-fetch-mode") < order.index("sec-fetch-dest")
+
 
 class TestFingerprintThroughProxy:
     """Live integration: headers reflected through the proxy must carry a real
@@ -152,3 +160,75 @@ class TestFingerprintThroughProxy:
         # No scrubbed build anywhere.
         assert "Chrome/150.0.0.0" not in text
         assert "Chrome/146.0.0.0" not in text
+
+    @pytest.mark.live
+    def test_http2_header_order_canonical(self):
+        """HTTP/2 header order through the proxy must match Chrome's canonical
+        order (CH family grouped, UA before accept, fetch-* cluster). Uses
+        tls.peet.ws which reports the true on-the-wire HTTP/2 HEADERS frame.
+        """
+        import os
+        import socket
+        import tempfile
+        import threading
+        import time
+        from http.server import HTTPServer
+        from socketserver import ThreadingMixIn
+
+        import requests
+
+        from impersonate_proxy import main as impersonate_proxy
+
+        def _free_port():
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                return s.getsockname()[1]
+
+        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+            daemon_threads = True
+
+        port = _free_port()
+        proxy_url = f"http://127.0.0.1:{port}"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            impersonate_proxy._init_ca(tmpdir)
+            ca_cert = os.path.join(tmpdir, "ca.crt")
+            server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            for _ in range(50):
+                try:
+                    sock = socket.create_connection(("127.0.0.1", port), timeout=0.1)
+                    sock.close()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            try:
+                resp = requests.get(
+                    "https://tls.peet.ws/api/all",
+                    proxies={"http": proxy_url, "https": proxy_url},
+                    timeout=30,
+                    verify=ca_cert,
+                )
+                assert resp.status_code == 200
+                data = resp.json()
+            finally:
+                server.shutdown()
+
+        frames = data["http2"]["sent_frames"]
+        headers: list[str] = []
+        for frame in frames:
+            if frame.get("frame_type") == "HEADERS":
+                for h in frame["headers"]:
+                    if not h.startswith(":"):
+                        headers.append(h.split(":")[0].strip().lower())
+                break
+
+        def idx(name: str) -> int:
+            assert name in headers, f"{name} missing from HTTP/2 order: {headers}"
+            return headers.index(name)
+
+        # Canonical Chrome order assertions.
+        assert idx("sec-ch-ua") < idx("sec-ch-ua-full-version-list") < idx("sec-ch-ua-platform-version")
+        assert idx("sec-ch-ua-mobile") < idx("sec-ch-ua-platform")
+        assert idx("user-agent") < idx("accept")
+        assert idx("sec-fetch-site") < idx("sec-fetch-mode") < idx("sec-fetch-dest")
