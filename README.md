@@ -17,6 +17,7 @@ HTTP/HTTPS proxy that impersonates browser TLS fingerprints using [curl_cffi](ht
 - **Strips** conflicting non-browser client headers (e.g. `User-Agent: python-httpx`) so native `curl-impersonate` defaults shine through.
 - **Preserves** request payload, auth, and shape semantics (`Cookie`, `Authorization`, `Host`, `Sec-Fetch-*` for XHR).
 - **Delegates** all browser TLS fingerprinting and header generation directly to `curl-impersonate` via `curl_cffi`.
+- **Overrides** curl_cffi's residual tells with a curated, platform-coherent client-hint fingerprint — full-build User-Agent, complete `Sec-CH-UA` family, and canonical HTTP/2 header order — enabled by default (`--no-fingerprint-real` to disable).
 
 Pypi: [pypi.org/project/impersonate-proxy](https://pypi.org/project/impersonate-proxy/)
 

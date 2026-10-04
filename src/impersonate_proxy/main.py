@@ -326,10 +326,11 @@ def main() -> None:
         "--strip-client-leak-headers",
         action="store_true",
         default=os.environ.get("IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS", "false").lower() in ("true", "1", "yes"),
-        help="Drop middlebox/identity-leak headers (X-Forwarded-*, Forwarded, Via, "
-        "X-Real-IP, True-Client-IP, CF-Connecting-IP, X-Cluster-Client-IP, "
-        "Fastly-Client-IP, X-Request-ID, X-Correlation-ID). Combinable with any "
-        "header mode. Or IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS=true",
+        help="Drop middlebox-chain / tracing leak headers (X-Forwarded-*, "
+        "Forwarded, Via, X-Request-ID, X-Correlation-ID). CDN-ingress headers "
+        "(X-Real-IP, True-Client-IP, etc.) are forwarded with a warning when "
+        "present. Combinable with any header mode. Or "
+        "IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS=true",
     )
     parser.add_argument(
         "--upstream-proxy",

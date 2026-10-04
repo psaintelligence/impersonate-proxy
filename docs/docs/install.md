@@ -58,15 +58,15 @@ volumes:
 Run `impersonate-proxy --help` to view all available parameters:
 
 ```text
-usage: python3 -m impersonate_proxy.main [-h] [--port PORT] [--host HOST]
-                                         [--impersonate IMPERSONATE]
-                                         [--cffi-defaults | --passthrough-headers]
-                                         [--strip-client-leak-headers]
-                                         [--upstream-proxy UPSTREAM_PROXY]
-                                         [--session-pool-max SESSION_POOL_MAX]
-                                         [--connect-timeout CONNECT_TIMEOUT]
-                                         [--read-timeout READ_TIMEOUT]
-                                         [--ca-dir CA_DIR] [--debug] [--quiet]
+usage: impersonate-proxy [-h] [--port PORT] [--host HOST]
+                         [--impersonate IMPERSONATE] [--cffi-defaults |
+                         --passthrough-headers] [--strip-client-leak-headers]
+                         [--upstream-proxy UPSTREAM_PROXY]
+                         [--no-fingerprint-real]
+                         [--session-pool-max SESSION_POOL_MAX]
+                         [--connect-timeout CONNECT_TIMEOUT]
+                         [--read-timeout READ_TIMEOUT] [--ca-dir CA_DIR]
+                         [--debug] [--quiet]
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints
 
@@ -80,34 +80,41 @@ options:
                         Browser to impersonate (chrome, firefox, etc. Default:
                         chrome or IMPERSONATE_PROXY_IMPERSONATE)
   --cffi-defaults       Strip browser-shape headers (User-Agent, Sec-Ch-Ua-*,
-                        Accept-Encoding, Priority, TE, Upgrade-Insecure-Requests,
-                        Sec-Fetch-User) from the client and drop bot-tell
-                        headers (Cache-Control, DNT, Connection) so curl_cffi
-                        injects the correct current browser values from its
-                        impersonation profile. [DEFAULT]
+                        Accept-Encoding, Priority, TE, Upgrade-Insecure-
+                        Requests, Sec-Fetch-User) from the client and drop
+                        bot-tell headers (Cache-Control, DNT, Connection) so
+                        curl_cffi injects the correct current browser values
+                        from its impersonation profile. [DEFAULT]
   --passthrough-headers
                         Forward client headers untouched; curl_cffi only sets
                         TLS-impersonation headers. For advanced users.
   --strip-client-leak-headers
-                        Drop middlebox-chain / tracing leak headers (X-Forwarded-*,
-                        Forwarded, Via, X-Request-ID, X-Correlation-ID).
-                        CDN-ingress headers (X-Real-IP, True-Client-IP, etc.)
-                        are forwarded with a warning when present. Combinable
-                        with any header mode.
+                        Drop middlebox-chain / tracing leak headers
+                        (X-Forwarded-*, Forwarded, Via, X-Request-ID,
+                        X-Correlation-ID). CDN-ingress headers (X-Real-IP,
+                        True-Client-IP, etc.) are forwarded with a warning
+                        when present. Combinable with any header mode. Or
+                        IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS=true
   --upstream-proxy UPSTREAM_PROXY
-                        Upstream egress proxy URL (e.g. http://127.0.0.1:8080 or
-                        IMPERSONATE_PROXY_UPSTREAM_PROXY)
+                        Upstream egress proxy URL (e.g. http://127.0.0.1:8080
+                        or IMPERSONATE_PROXY_UPSTREAM_PROXY)
+  --no-fingerprint-real
+                        Disable injection of platform-coherent full-build UA +
+                        complete Sec-CH-UA family on top of curl_cffi's TLS
+                        impersonation. On by default in cffi-defaults mode. Or
+                        IMPERSONATE_PROXY_FINGERPRINT_REAL=false
   --session-pool-max SESSION_POOL_MAX
-                        Maximum reusable curl_cffi sessions in pool (default: 32 or
-                        IMPERSONATE_PROXY_SESSION_POOL_MAX)
+                        Maximum reusable curl_cffi sessions in pool (default:
+                        32 or IMPERSONATE_PROXY_SESSION_POOL_MAX)
   --connect-timeout CONNECT_TIMEOUT
-                        Upstream TCP/TLS connect timeout in seconds (default: 10.0 or
-                        IMPERSONATE_PROXY_CONNECT_TIMEOUT)
+                        Upstream TCP/TLS connect timeout in seconds (default:
+                        10.0 or IMPERSONATE_PROXY_CONNECT_TIMEOUT)
   --read-timeout READ_TIMEOUT
-                        Upstream HTTP read timeout in seconds (default: 300.0 or
-                        IMPERSONATE_PROXY_READ_TIMEOUT)
-  --ca-dir, -c CA_DIR   Directory to store/load CA certificate and key (default:
-                        ~/.config/impersonate-proxy or IMPERSONATE_PROXY_CA_DIR)
+                        Upstream HTTP read timeout in seconds (default: 300.0
+                        or IMPERSONATE_PROXY_READ_TIMEOUT)
+  --ca-dir, -c CA_DIR   Directory to store/load CA certificate and key
+                        (default: ~/.config/impersonate-proxy or
+                        IMPERSONATE_PROXY_CA_DIR)
   --debug, -d           Enable verbose debug logging (unredacts URLs/hosts in
                         logs) or IMPERSONATE_PROXY_DEBUG=true
   --quiet, -q           Disable logging of request traffic or

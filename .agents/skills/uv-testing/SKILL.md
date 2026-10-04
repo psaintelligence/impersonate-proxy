@@ -12,5 +12,5 @@ When running `uv` commands (like `uv run pytest`, `uv pip install`, etc.), you M
 Use the following pattern for this project:
 `UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv <command>`
 
-Example for running tests:
-`UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run pytest tests/ -v`
+Example for running tests (pytest lives in the `dev` extra — always pass `--extra dev`):
+`UV_PROJECT_ENVIRONMENT=${HOME}/.local/venvs/impersonate-proxy UV_CACHE_DIR=/tmp/.uv-cache-impersonate-proxy UV_LINK_MODE=copy uv run --extra dev pytest tests/ -v`

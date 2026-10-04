@@ -11,6 +11,7 @@ Here is the layout of the `.agents` folder:
 ```
 .agents/
 ├── AGENTS.md                          # This file (Agent guide)
+├── config/                            # Auto-generated tool config (nono sandbox; untracked)
 ├── context/
 │   └── project_context.md             # Core design principles and guidelines
 ├── rules/
@@ -26,7 +27,7 @@ Here is the layout of the `.agents` folder:
 │   ├── karpathy-guidelines/
 │   │   └── SKILL.md                   # Andrej Karpathy guidelines for senior LLM coding
 │   ├── python-pro/
-│   │   └── SKILL.md                   # Python 3.11+ and tool-specific guidelines (uv, ruff)
+│   │   └── SKILL.md                   # Python 3.12+ and tool-specific guidelines (uv, ruff)
 │   ├── uv-testing/
 │   │   └── SKILL.md                   # Guidelines on isolated virtual env testing
 │   └── vulnerability-scanner/
@@ -35,6 +36,7 @@ Here is the layout of the `.agents` folder:
 │       └── scripts/
 │           └── security_scan.py       # Automated project security validation script
 └── workflows/
+    ├── fingerprint-verification.md    # Verify fingerprint integrity after curl_cffi/impersonate changes
     ├── post-implementation-verification.md  # Step-by-step verification checklist
     └── uv-commands.md                 # How to execute uv commands without local .venv leakage
 ```
@@ -45,7 +47,7 @@ Here is the layout of the `.agents` folder:
 
 ### 1. Context (`context/`)
 * **[project_context.md](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/context/project_context.md)**: **CRITICAL.** Read this file before making any changes. It details:
-  * **Core Stack**: Python 3.11+, setuptools, curl_cffi, cryptography, and package management with `uv`.
+  * **Core Stack**: Python 3.12+, hatchling, curl_cffi, cryptography, and package management with `uv`.
   * **Architectural Decisions**: In-memory CA Root generation and installation in system trust store; dynamic SSLContext server-side socket wrapper for MITM decryption; fallback to raw TCP tunnels.
   * **Coding Standards**: Synchronous socket and connection loop handling, ruff-lint checked code, and strict isolation of virtual environment.
 
@@ -59,7 +61,7 @@ These represent specialized instructions to guide your implementation:
 * **[caveman](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/caveman/SKILL.md)**: Guidelines for ultra-compressed communication, reducing token usage while retaining maximum technical accuracy.
 * **[code-reviewer](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/code-reviewer/SKILL.md)**: Guide for identifying security vulnerabilities, performance bottlenecks, error-handling bugs, and code styling standards.
 * **[karpathy-guidelines](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/karpathy-guidelines/SKILL.md)**: Guidelines for avoiding LLM-specific coding pitfalls, focusing on simplicity, making surgical edits, and defining clear goals.
-* **[python-pro](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/python-pro/SKILL.md)**: Best practices for Python 3.11+, clean type hints, modern formatting, and testing patterns.
+* **[python-pro](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/python-pro/SKILL.md)**: Best practices for Python 3.12+, clean type hints, modern formatting, and testing patterns.
 * **[uv-testing](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/uv-testing/SKILL.md)**: Reinforces instructions for running testing commands under isolated execution environments.
 * **[vulnerability-scanner](file:///home/ndejong/cyberco/projects/impersonate-proxy/.agents/skills/vulnerability-scanner/SKILL.md)**: Provides threat modeling patterns, OWASP 2025 guidelines, supply chain safety rules, and validation tools.
 

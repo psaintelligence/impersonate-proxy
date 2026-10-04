@@ -97,7 +97,7 @@ Env var: `IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS=true`.
 
 ### How cffi-defaults works
 
-curl_cffi (with `default_headers=True`, the project's default) automatically injects the **complete current browser header set** from its impersonation profile — `User-Agent`, `Sec-Ch-Ua-*`, `Sec-Fetch-*`, `Accept`, `Accept-Encoding`, `Accept-Language`, `Priority`, `TE` — matching the [curl-impersonate captured signatures](https://github.com/lexiforest/curl-impersonate/tree/main/tests/signatures) for `chrome146` / `firefox147` exactly.
+curl_cffi (with `default_headers=True`, the project's default) automatically injects the **complete current browser header set** from its impersonation profile — `User-Agent`, `Sec-Ch-Ua-*`, `Sec-Fetch-*`, `Accept`, `Accept-Encoding`, `Accept-Language`, `Priority`, `TE` — matching the [curl-impersonate captured signatures](https://github.com/lexiforest/curl-impersonate/tree/main/tests/signatures) for `chrome150` / `firefox147` exactly.
 
 **Critical behaviour**: client-supplied headers OVERRIDE curl_cffi's defaults. So forwarding a client's `Accept: */*` or `Accept-Encoding: gzip, deflate` *silently breaks* impersonation — curl_cffi cannot fix it.
 
@@ -108,7 +108,20 @@ curl_cffi (with `default_headers=True`, the project's default) automatically inj
 3. **Strips** `Accept-Language` only when the client sent the literal `*` (a bot tell); real values like `en-US,en;q=0.9` are preserved.
 4. **Preserves** everything else: request-specific headers (`Host`, `Cookie`, `Authorization`, `Referer`, `Origin`, `Content-Type`, `Content-Length`, `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`, `Range`) and shape-dependent headers curl_cffi cannot infer — `Accept` (nav vs XHR), `Sec-Fetch-Dest/Mode/Site`. A non-browser XHR client (e.g. httpx) correctly sends `Sec-Fetch-Mode: cors` on its XHR requests; preserving it keeps the request XHR-shaped. Forcing curl_cffi's nav-style defaults onto an XHR request would itself be a bot tell.
 
-The Chrome and Firefox header sets curl_cffi injects are sourced from the [curl-impersonate signature files](https://github.com/lexiforest/curl-impersonate/tree/main/tests/signatures) and track the latest default profiles (`chrome146`, `firefox147` as of curl_cffi >= 0.7). The proxy no longer hardcodes them.
+The Chrome and Firefox header sets curl_cffi injects are sourced from the [curl-impersonate signature files](https://github.com/lexiforest/curl-impersonate/tree/main/tests/signatures) and track the latest default profiles (`chrome150`, `firefox147` as of curl_cffi >= 0.16). The proxy no longer hardcodes them.
+
+### The realistic client-hint override (`--fingerprint-real`, default on)
+
+curl_cffi's impersonation profiles ship two residual tells that fingerprint services can detect:
+
+1. **Scrubbed UA build** — `Chrome/150.0.0.0` instead of a real full build like `Chrome/150.0.7871.189`.
+2. **Incomplete client-hint family** — only the basic `Sec-CH-UA` triplet, missing `Sec-CH-UA-Full-Version-List`, `Sec-CH-UA-Platform-Version`, `Sec-CH-UA-Arch`, `Sec-CH-UA-Bitness`.
+
+On top of curl_cffi's TLS profile, the proxy injects a curated, *platform-coherent* header fingerprint (`fingerprint.py`) for recognized Chrome targets: a full-build User-Agent plus the complete `Sec-CH-UA-*` family, with the UA platform token, `Sec-CH-UA-Platform`, and `Sec-CH-UA-Platform-Version` kept mutually consistent (a Windows UA with `Sec-CH-UA-Platform: "macOS"` is an instant bot tell).
+
+It also fixes **HTTP/2 header ordering**: curl_cffi's profile sends the injected client hints in non-canonical order, so the proxy passes `extra_fp={"header_order": ...}` with Chrome's canonical wire order (client-hint family grouped, `user-agent` before `accept`, then the `sec-fetch-*` cluster). Header order is enforced at the HTTP/2 frame level — the order fingerprint services actually inspect.
+
+Disable with `--no-fingerprint-real` or `IMPERSONATE_PROXY_FINGERPRINT_REAL=false`. The override is active only in `cffi-defaults` mode and only when a curated fingerprint exists for the target; unknown targets fall back to curl_cffi's untouched profile headers.
 
 ### Choosing a mode
 
