@@ -216,3 +216,35 @@ export REQUESTS_CA_BUNDLE=~/.config/impersonate-proxy/ca.crt
 # Test HTTPS request through the proxy
 curl -x http://127.0.0.1:8899 https://example.com
 ```
+
+---
+
+## Development
+
+The repository ships a `Makefile` wrapping the common development tasks
+(all commands run through `uv` with an isolated virtualenv and cache):
+
+```bash
+make help            # List all available targets
+make setup           # Create the isolated virtualenv and sync dependencies
+make sync            # Sync python dependencies (dev environment)
+make test            # Run offline unit and integration tests
+make test-verbose    # Run offline tests with verbose output
+make test-live       # Run basic live tests (hit real URLs)
+make test-extended   # Run extended fingerprint/bot-detection live tests
+make benchmark       # Run the concurrency performance benchmark
+make lint            # Run linting checks (ruff)
+make format          # Format code (ruff)
+make lint-fix        # Auto-fix linting and formatting issues
+make typecheck       # Run type checking (basedpyright)
+make build           # Build wheel and source distributions
+make bump-patch      # Bump the patch version number (e.g. 0.1.0 -> 0.1.1)
+make bump-minor      # Bump the minor version number (e.g. 0.1.0 -> 0.2.0)
+make clean           # Clean build and cache artifacts
+make docs-sync       # Sync documentation dependencies
+make docs-build      # Build documentation site
+make docs-serve      # Serve documentation locally
+```
+
+Tests marked `live` / `live_extended` are deselected by default and require
+internet access; run them explicitly with `make test-live` / `make test-extended`.

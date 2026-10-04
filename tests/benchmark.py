@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer as StdlibThreadingHTTPServer
 
 import requests
 
@@ -24,7 +25,7 @@ class MockHandler(BaseHTTPRequestHandler):
 
 
 def start_mock_server():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
+    server = StdlibThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
     port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
