@@ -1,6 +1,6 @@
-# Project Context: impersonate-proxy
+# Design: impersonate-proxy
 
-Welcome to the `impersonate-proxy` codebase context. This document outlines the core stack, architecture, design decisions, and coding standards.
+Welcome to the `impersonate-proxy` design document. This document outlines the core stack, architecture, design decisions, and coding standards.
 
 ---
 
