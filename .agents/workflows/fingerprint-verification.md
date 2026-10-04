@@ -16,7 +16,7 @@ The proxy delegates TLS impersonation to `curl_cffi` but must override the
 fingerprint service (Cloudflare, browserleaks, etc.) can detect:
 
 1. **Scrubbed UA build** — e.g. `Chrome/150.0.0.0`. Real browsers send a full
-   build like `Chrome/150.0.6585.24`. The `.0.0.0` suffix is the classic
+   build like `Chrome/150.0.7871.189`. The `.0.0.0` suffix is the classic
    placeholder value proxy tools emit.
 2. **Incomplete Sec-CH-UA family** — only the basic triplets
    (`Sec-CH-UA`, `Sec-CH-UA-Mobile`, `Sec-CH-UA-Platform`). A real desktop
@@ -35,7 +35,7 @@ partial client hints — no genuine browser sends that. Both must be coherent.
 
 A real browser is internally consistent. These must ALL agree, or it's a tell:
 
-- `User-Agent` build (e.g. `150.0.6585.24`) must match the version in
+- `User-Agent` build (e.g. `150.0.7871.189`) must match the version in
   `Sec-CH-UA-Full-Version-List` ("Chromium" and "Google Chrome" entries).
 - `User-Agent` major (e.g. `150`) must match the major in base `Sec-CH-UA`
   (the src-ch-ua triplet). A mismatch here (146-vs-150) is an instant tell.
@@ -130,7 +130,7 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
    stays in sync with the TLS signature.
 3. **Is the base `Sec-CH-UA` triplet emitted by the new profile already
    aligned with the UA major?** When using the native newest target (e.g.
-   `chrome150` on curl_cffi 0.16.1b1) the base triplet is already correct, so
+   `chrome150` on curl_cffi 0.16.4b1) the base triplet is already correct, so
    you do **not** need to override it — but the fingerprint module overrides it
    defensively anyway to prevent major-skew. Keep that behavior.
 4. **Run all three verification steps above.** Step 1 catches header coherence;
@@ -143,11 +143,11 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
 
 ## Current version facts (as of last verification)
 
-- `curl_cffi` pinned at `>=0.16.1b1` (prerelease required — `chrome150` only
-  exists there; `0.16.0` tops out at `chrome146` and raises `ImpersonateError`
-  for `chrome150`).
+- `curl_cffi` pinned at `>=0.16.4b1` (prerelease required — `chrome150` exists
+  there; `0.16.0` tops out at `chrome146` and raises `ImpersonateError` for
+  `chrome150`).
 - Bare `chrome` resolves to `chrome150`, default fingerprint = Chrome 150
-  `150.0.6585.24`, Windows / x64 / bitness 64 / `10.0.0`.
+  `150.0.7871.189`, Windows / x64 / bitness 64 / `10.0.0`.
 - Header order fixed via `extra_fp={"header_order": ...}` on every
   `fingerprint_real` request; verified canonical on the wire via
   `tls.peet.ws/api/all`.

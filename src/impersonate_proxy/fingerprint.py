@@ -16,10 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # Latest stable Chromium major this package is curated against. Keep in sync
-# with the newest supported curl_cffi chrome target (chrome150 as of 0.16.1b1).
+# with the newest supported curl_cffi chrome target (chrome150 as of 0.16.4b1).
 # For newer versions: extend _FINGERPRINTS with a new entry and bump DEFAULT_MAJOR.
 DEFAULT_MAJOR: int = 150
-DEFAULT_BUILD: str = "150.0.6585.24"
+# Final Chrome 150 stable build (last 150-series patch, per Chrome version
+# history; real-world stable ended at 7871.189 before 151 rolled out).
+DEFAULT_BUILD: str = "150.0.7871.189"
 
 # Canonical HTTP/2 header order for a desktop-Chrome navigation request. Mirrors
 # what genuine Chrome emits; unused headers are appended by curl_cffi after this
@@ -130,7 +132,9 @@ _FINGERPRINTS: dict[str, BrowserFingerprint] = {
     ),
     "chrome146": _chrome(
         146,
-        "146.0.6004.99",
+        # Final Chrome 146 stable build (last 146-series patch before the
+        # 147 rollout; real-world builds were 146.0.7680.x).
+        "146.0.7680.180",
         "Windows NT 10.0; Win64; x64",
         "Windows",
         "10.0.0",

@@ -157,7 +157,7 @@ class TestFingerprintThroughProxy:
                 server.shutdown()
 
         # Strings the reflection service echoes back verbatim.
-        assert "Chrome/150.0.6585.24" in text, f"scrubbed or unexpected UA; got:\n{text}"
+        assert "Chrome/150.0.7871.189" in text, f"scrubbed or unexpected UA; got:\n{text}"
         assert "Sec-Ch-Ua-Full-Version-List" in text, "missing full CH family"
         assert "Sec-Ch-Ua-Platform-Version" in text, "missing platform version"
         assert 'Sec-Ch-Ua-Platform: "Windows"' in text
