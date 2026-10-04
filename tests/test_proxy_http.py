@@ -5,12 +5,23 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 import pytest
 import requests
 
 from impersonate_proxy.context import ProxyConfig, ProxyContext
 from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
+
+_UPSTREAM_ACTIVE = 0
+_UPSTREAM_PEAK = 0
+_UPSTREAM_LOCK = threading.Lock()
+
+
+class _ThreadingUpstream(ThreadingMixIn, HTTPServer):
+    """Threaded upstream so concurrent proxy threads overlap in handlers."""
+
+    daemon_threads = True
 
 
 class MockUpstreamHandler(BaseHTTPRequestHandler):
@@ -20,6 +31,22 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == "/slow":
+            # Track concurrent handlers for the max-threads cap tests.
+            global _UPSTREAM_ACTIVE, _UPSTREAM_PEAK
+            with _UPSTREAM_LOCK:
+                _UPSTREAM_ACTIVE += 1
+                _UPSTREAM_PEAK = max(_UPSTREAM_PEAK, _UPSTREAM_ACTIVE)
+            time.sleep(0.2)
+            with _UPSTREAM_LOCK:
+                _UPSTREAM_ACTIVE -= 1
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
+
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/redirected")
@@ -71,7 +98,7 @@ def _get_free_port():
 def upstream_server():
     """Start a mock upstream HTTP server."""
     port = _get_free_port()
-    server = HTTPServer(("127.0.0.1", port), MockUpstreamHandler)
+    server = _ThreadingUpstream(("127.0.0.1", port), MockUpstreamHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     for _ in range(50):
@@ -278,3 +305,58 @@ class TestProxyHTTP:
             call_kwargs = mock_sess.request.call_args[1]
             assert call_kwargs["proxies"] == {"http": "http://parent.proxy:8080", "https": "http://parent.proxy:8080"}
             assert call_kwargs["timeout"] == (5.0, 60.0)
+
+
+def _start_proxy_with_ctx(ctx: ProxyContext) -> tuple[ThreadingHTTPServer, str]:
+    port = _get_free_port()
+    server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    for _ in range(50):
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
+            s.close()
+            break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("proxy server never became ready")
+    return server, f"http://127.0.0.1:{port}"
+
+
+class TestMaxThreads:
+    def _run_burst(self, upstream_server: str, proxy_url: str) -> None:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(
+                pool.map(
+                    lambda i: requests.get(
+                        f"{upstream_server}/slow", proxies={"http": proxy_url}, timeout=15
+                    ).status_code,
+                    range(8),
+                )
+            )
+        assert all(status == 200 for status in results)
+
+    def test_max_threads_caps_concurrent_handlers(self, upstream_server):
+        global _UPSTREAM_PEAK
+        _UPSTREAM_PEAK = 0
+        ctx = ProxyContext(ProxyConfig(max_threads=2))
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        try:
+            self._run_burst(upstream_server, proxy_url)
+            assert _UPSTREAM_PEAK <= 2
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
+
+    def test_unlimited_by_default(self, upstream_server):
+        global _UPSTREAM_PEAK
+        _UPSTREAM_PEAK = 0
+        ctx = ProxyContext(ProxyConfig())
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        try:
+            self._run_burst(upstream_server, proxy_url)
+            assert _UPSTREAM_PEAK >= 3
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()

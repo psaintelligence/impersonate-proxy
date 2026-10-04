@@ -83,6 +83,7 @@ def run(
     proxy_auth: str | None = None,
     allow_from: tuple[str, ...] = (),
     stats_port: int | None = None,
+    max_threads: int = 0,
     ctx: ProxyContext | None = None,
 ) -> None:
     """Run the proxy server with the given configuration until interrupted."""
@@ -106,6 +107,7 @@ def run(
         block_hosts=block_hosts,
         proxy_auth=proxy_auth,
         allow_from=allow_from,
+        max_threads=max_threads,
     )
     target_ctx.session_pool_max = session_pool_max
 
@@ -269,6 +271,13 @@ def main() -> None:
         "or IMPERSONATE_PROXY_STATS_PORT)",
     )
     parser.add_argument(
+        "--max-threads",
+        type=int,
+        default=int(os.environ.get("IMPERSONATE_PROXY_MAX_THREADS", "0")),
+        help="Maximum concurrent handler threads; excess connections wait in the "
+        "listen backlog (default: 0 = unlimited, or IMPERSONATE_PROXY_MAX_THREADS)",
+    )
+    parser.add_argument(
         "--ca-dir",
         "-c",
         default=os.environ.get("IMPERSONATE_PROXY_CA_DIR"),
@@ -322,6 +331,7 @@ def main() -> None:
         proxy_auth=args.proxy_auth,
         allow_from=allow_from,
         stats_port=args.stats_port,
+        max_threads=args.max_threads,
     )
 
 

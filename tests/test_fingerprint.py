@@ -32,7 +32,40 @@ class TestFingerprintFor:
         assert "Chrome/146." in fp.user_agent
 
     def test_unknown_target_returns_none(self):
-        assert fingerprint_for("firefox") is None
+        assert fingerprint_for("bogus-target") is None
+
+
+class TestFirefoxFingerprint:
+    """Firefox curation is UA-only: no client hints, no order override."""
+
+    def test_alias_resolves_to_firefox147(self):
+        assert fingerprint_for("firefox") is not None
+        assert fingerprint_for("firefox") == fingerprint_for("firefox147")
+
+    def test_ua_coherent(self):
+        fp = fingerprint_for("firefox147")
+        assert fp is not None
+        assert fp.browser == "firefox"
+        # rv must match the Firefox/ version (platform coherence within the UA).
+        rv = [p for p in fp.user_agent.split() if p.startswith("rv:")][0].rstrip(")")
+        firefox = [p for p in fp.user_agent.split() if p.startswith("Firefox/")][0]
+        assert rv == f"rv:{firefox.split('/')[1]}"
+        assert "Firefox/147.0" in fp.user_agent
+        assert "Windows NT 10.0" in fp.user_agent
+
+    def test_headers_are_ua_only(self):
+        fp = fingerprint_for("firefox147")
+        assert fp is not None
+        headers = fp.to_headers()
+        assert set(headers) == {"User-Agent"}
+        assert "sec-ch-ua" not in {k.lower() for k in headers}
+
+    def test_no_header_order_override(self):
+        # curl_cffi's firefox profile already carries the authentic captured
+        # order; overriding it would be a regression.
+        fp = fingerprint_for("firefox147")
+        assert fp is not None
+        assert fp.header_order == ""
 
 
 class TestFingerprintCoherence:

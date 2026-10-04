@@ -141,6 +141,30 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
    and that `test_http2_header_order_canonical` still passes. Remember the
    order is enforced via `extra_fp={"header_order": ...}`, which is HTTP/2-only.
 
+## Firefox curation rules (non-negotiable)
+
+Firefox targets (`firefox147`, alias `firefox`) are curated **UA-only**:
+
+- Firefox sends **no** client hints — `to_headers()` must emit **only**
+  `User-Agent` (checked by `test_headers_are_ua_only`). Never add
+  `Sec-CH-UA-*` to a Firefox fingerprint.
+- Firefox UAs carry no scrubbed-build tell (`rv:` always equals the
+  `Firefox/` version), so the curation pins a full platform-coherent UA:
+  `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:<major>.0) Gecko/20100101
+  Firefox/<major>.0` — Windows/Win64/x64, consistent with the Chrome family
+  default platform.
+- `header_order` must stay **empty** for Firefox: curl_cffi's firefox
+  profiles already ship the authentic captured HTTP/2 order (verified on the
+  wire via tls.peet.ws: user-agent, accept, accept-language, accept-encoding,
+  upgrade-insecure-requests, sec-fetch-dest, sec-fetch-mode, sec-fetch-site,
+  sec-fetch-user, priority, te). `session_pool` skips
+  `extra_fp={"header_order": ...}` when the order is empty — never "fix" this
+  by inventing a Firefox order.
+- Extending to a newer Firefox target: add a `_firefox(<major>, ...)` entry to
+  `_FINGERPRINTS`, move `_ALIASES["firefox"]` to the new target (mirror
+  curl_cffi's `DEFAULT_FIREFOX`), and keep `rv`/`Firefox/` coherence in
+  `test_ua_coherent`.
+
 ## Current version facts (as of last verification)
 
 - `curl_cffi` pinned at `>=0.16.4b1` (prerelease required — `chrome150` exists
@@ -149,7 +173,12 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
 - Bare `chrome` resolves to `chrome150`, default fingerprint = Chrome 150
   `150.0.7871.189`, Windows / x64 / bitness 64 / `10.0.0`.
 - Header order fixed via `extra_fp={"header_order": ...}` on every
-  `fingerprint_real` request; verified canonical on the wire via
-  `tls.peet.ws/api/all`.
+  `fingerprint_real` request for Chrome; verified canonical on the wire via
+  `tls.peet.ws/api/all`. Firefox targets send no `header_order` override
+  (curl_cffi's captured order is already authentic).
+- Firefox curation: `fingerprint_for("firefox147")` / alias `firefox` →
+  UA-only fingerprint (`rv:147.0` == `Firefox/147.0`, Windows/Win64/x64);
+  verified through the proxy on `tls.peet.ws/api/all` (UA reflects the pinned
+  Windows Firefox UA, no `sec-ch-ua` family present).
 - Verified coherent through the proxy against `whoami...`,
   `tls.browserleaks.com/json`, and `tls.peet.ws/api/all`.

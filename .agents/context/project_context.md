@@ -53,6 +53,10 @@ The proxy operates in two primary modes depending on whether it receives plain H
    - Hop-by-hop header stripping is a single shared `_HOP_BY_HOP_HEADERS` frozenset in `server.py` used by both the MITM and plain-HTTP paths.
    - Open-proxy guardrails (off by default): `--proxy-auth user:password` (constant-time Basic check on CONNECT before `200`, 407 otherwise) and `--allow-from` (bare-IP auto-netblock or CIDR, 403 for foreign clients). Deny-list responses flow through `_reject_client()` which also feeds the stats counters.
    - Optional `--stats-port` exposes Prometheus metrics at `/metrics` (`stats.py`): requests per mode, upstream failures, 4xx/5xx classes, session-pool high-water, cert-cache size. Counters live on `ctx.stats` (always on), endpoint gated.
+   - CA generation is concurrency-safe: an exclusive `.generate-claim` file elects one generator that publishes `ca.key`/`ca.crt` via atomic `os.replace`; losers wait for a consistent pair (`cert_manager._load_ca_files` verifies key↔cert match on load).
+   - Leaf certs load from a single combined PEM temp file (cert+key); stdlib `SSLContext` has no in-memory cert loading.
+   - `--max-threads N` (0 = unlimited) caps concurrent handler threads via a `BoundedSemaphore` in `ThreadingHTTPServer.process_request`; the accept loop blocks at the cap (backlog absorbs excess).
+   - Firefox fingerprints (`fingerprint_for("firefox147")`, alias `firefox`) are UA-only (`browser="firefox"` → `to_headers()` emits just the User-Agent) with empty `header_order` — never impose Chrome's order or CH family on Firefox targets; `session_pool` only sends `extra_fp={"header_order": ...}` when the fingerprint has a non-empty order.
 
 ---
 

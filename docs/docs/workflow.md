@@ -59,6 +59,7 @@ Under load (such as bursts of ~100 concurrent requests), initiating new `curl_cf
 - **Global Session Pool**: The proxy manages a queue-based `_SESSION_POOL` containing reusable `curl_cffi` sessions (capped at 32).
 - **Upstream Keep-Alive**: Reusing sessions maintains active TCP connections to target hosts. Subsequent requests to the same target domain completely bypass DNS resolving and TCP/TLS handshake steps.
 - **Resource Leasing**: When a request starts, a session is leased from the pool. The proxy wraps the response's `close()` method so that the session is automatically returned to the pool only when the response stream has been fully consumed or closed by the client.
+- **Handler Thread Cap**: `--max-threads N` (env `IMPERSONATE_PROXY_MAX_THREADS`, default 0 = unlimited) bounds the concurrent handler threads with a semaphore; when the cap is reached the accept loop blocks and excess connections wait in the TCP listen backlog until a slot frees.
 
 ### Keep-alive CONNECT tunnels (client side)
 
@@ -185,6 +186,8 @@ curl_cffi's impersonation profiles ship two residual tells that fingerprint serv
 2. **Incomplete client-hint family** — only the basic `Sec-CH-UA` triplet, missing `Sec-CH-UA-Full-Version-List`, `Sec-CH-UA-Platform-Version`, `Sec-CH-UA-Arch`, `Sec-CH-UA-Bitness`.
 
 On top of curl_cffi's TLS profile, the proxy injects a curated, *platform-coherent* header fingerprint (`fingerprint.py`) for recognized Chrome targets: a full-build User-Agent plus the complete `Sec-CH-UA-*` family, with the UA platform token, `Sec-CH-UA-Platform`, and `Sec-CH-UA-Platform-Version` kept mutually consistent (a Windows UA with `Sec-CH-UA-Platform: "macOS"` is an instant bot tell).
+
+**Firefox targets** (`firefox147`, and the bare `firefox` alias) are curated **UA-only**: Firefox sends no client hints and its UA carries no scrubbed-build tell (`rv:` always matches `Firefox/`), so the proxy pins a full platform-coherent UA on the most common desktop shape (Windows / Win64 / x64, consistent with the Chrome family default) and leaves curl_cffi's authentic captured HTTP/2 header order untouched — no `header_order` override is sent for Firefox.
 
 It also fixes **HTTP/2 header ordering**: curl_cffi's profile sends the injected client hints in non-canonical order, so the proxy passes `extra_fp={"header_order": ...}` with Chrome's canonical wire order (client-hint family grouped, `user-agent` before `accept`, then the `sec-fetch-*` cluster). Header order is enforced at the HTTP/2 frame level — the order fingerprint services actually inspect.
 

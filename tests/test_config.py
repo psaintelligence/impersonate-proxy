@@ -27,6 +27,7 @@ _DEFAULT_RUN_CALL: dict[str, object] = {
     "proxy_auth": None,
     "allow_from": (),
     "stats_port": None,
+    "max_threads": 0,
 }
 
 
@@ -78,6 +79,7 @@ def test_config_env_vars():
             proxy_auth=None,
             allow_from=(),
             stats_port=None,
+            max_threads=0,
         )
 
 
@@ -123,6 +125,7 @@ def test_config_cli_args():
             proxy_auth=None,
             allow_from=(),
             stats_port=None,
+            max_threads=0,
         )
 
 
@@ -177,6 +180,7 @@ def test_config_cli_overrides_env():
             proxy_auth=None,
             allow_from=(),
             stats_port=None,
+            max_threads=0,
         )
 
 
@@ -485,6 +489,29 @@ def test_config_access_control_and_stats_flags():
         assert kwargs["proxy_auth"] == "bob:hunter2"
         assert kwargs["allow_from"] == ("172.16.0.0/12",)
         assert kwargs["stats_port"] == 9200
+
+
+def test_config_max_threads():
+    """Test --max-threads parsing (0 = unlimited) via CLI and env var."""
+    argv = ["impersonate-proxy", "--max-threads", "16"]
+    with (
+        patch("sys.argv", argv),
+        patch.dict(os.environ, {}, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["max_threads"] == 16
+
+    env = {"IMPERSONATE_PROXY_MAX_THREADS": "8"}
+    with (
+        patch("sys.argv", ["impersonate-proxy"]),
+        patch.dict(os.environ, env, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["max_threads"] == 8
 
 
 def test_config_invalid_impersonate_target():

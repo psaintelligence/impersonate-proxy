@@ -48,6 +48,8 @@ class ProxyConfig:
     # Client allowlist entries: bare IP (auto /24|/64 netblock) or explicit CIDR.
     # Empty allows all clients.
     allow_from: tuple[str, ...] = ()
+    # Maximum concurrent handler threads; 0 = unlimited (thread per connection).
+    max_threads: int = 0
 
     def __post_init__(self) -> None:
         if self.header_mode not in ("passthrough", "cffi-defaults"):

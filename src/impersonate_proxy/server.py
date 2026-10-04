@@ -8,11 +8,12 @@ import ipaddress
 import logging
 import select
 import socket
+import threading
 import urllib.parse
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Any
 
 from impersonate_proxy.cert_manager import get_cert_for_host
 from impersonate_proxy.context import ProxyContext
@@ -539,13 +540,41 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    """Multithreaded HTTP server bound to a ProxyContext."""
+    """Multithreaded HTTP server bound to a ProxyContext.
+
+    Optionally caps concurrent handler threads with a bounded semaphore
+    (``ProxyConfig.max_threads``); the accept loop blocks at the cap so excess
+    connections wait in the TCP listen backlog.
+    """
 
     daemon_threads = True
 
     def __init__(self, server_address: tuple[str, int], RequestHandlerClass: type[BaseHTTPRequestHandler], ctx: ProxyContext):
         self.ctx = ctx
+        self._thread_slots: threading.BoundedSemaphore | None = (
+            threading.BoundedSemaphore(ctx.config.max_threads) if ctx.config.max_threads > 0 else None
+        )
         super().__init__(server_address, RequestHandlerClass)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        """Acquire a thread slot before spawning the handler thread."""
+        if self._thread_slots is None:
+            super().process_request(request, client_address)
+            return
+        self._thread_slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._thread_slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        """Run the handler and release the thread slot afterwards."""
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            if self._thread_slots is not None:
+                self._thread_slots.release()
 
 
 def create_handler_class(ctx: ProxyContext) -> type[ProxyRequestHandler]:

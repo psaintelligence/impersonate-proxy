@@ -54,29 +54,39 @@ class BrowserFingerprint:
 
     user_agent: str
     # Base Sec-CH-UA triplet. Must carry the same major as UA / Full-Version-List.
-    sec_ch_ua: str
-    sec_ch_ua_full_version_list: str
-    sec_ch_ua_platform: str
-    sec_ch_ua_platform_version: str
-    sec_ch_ua_arch: str
-    sec_ch_ua_bitness: str
+    # Empty for browsers that send no client hints (Firefox).
+    sec_ch_ua: str = ""
+    sec_ch_ua_full_version_list: str = ""
+    sec_ch_ua_platform: str = ""
+    sec_ch_ua_platform_version: str = ""
+    sec_ch_ua_arch: str = ""
+    sec_ch_ua_bitness: str = ""
     sec_ch_ua_model: str = ""
     # Canonical HTTP/2 header order for a real desktop-Chrome navigation request.
     # curl_cffi sends headers not listed here appended after the listed order, so
     # this covers the browser-shape headers; request-specific ones trail.
+    # Empty for browsers whose curl_cffi profile already carries the authentic
+    # captured order (Firefox) — the proxy must not override it.
     header_order: str = field(default=_DEFAULT_HEADER_ORDER)
+    # Browser family whose header shape this fingerprint models.
+    browser: str = "chrome"
 
     def to_headers(self) -> dict[str, str]:
         """Return this fingerprint as a header dict, dropping empty fields."""
-        headers = {
-            "User-Agent": self.user_agent,
-            "Sec-CH-UA": self.sec_ch_ua,
-            "Sec-CH-UA-Full-Version-List": self.sec_ch_ua_full_version_list,
-            "Sec-CH-UA-Platform": self.sec_ch_ua_platform,
-            "Sec-CH-UA-Platform-Version": self.sec_ch_ua_platform_version,
-            "Sec-CH-UA-Arch": self.sec_ch_ua_arch,
-            "Sec-CH-UA-Bitness": self.sec_ch_ua_bitness,
-        }
+        headers = {"User-Agent": self.user_agent}
+        if self.browser == "firefox":
+            # Firefox sends no client hints — UA-only curation.
+            return headers
+        headers.update(
+            {
+                "Sec-CH-UA": self.sec_ch_ua,
+                "Sec-CH-UA-Full-Version-List": self.sec_ch_ua_full_version_list,
+                "Sec-CH-UA-Platform": self.sec_ch_ua_platform,
+                "Sec-CH-UA-Platform-Version": self.sec_ch_ua_platform_version,
+                "Sec-CH-UA-Arch": self.sec_ch_ua_arch,
+                "Sec-CH-UA-Bitness": self.sec_ch_ua_bitness,
+            }
+        )
         if self.sec_ch_ua_model:
             headers["Sec-CH-UA-Model"] = self.sec_ch_ua_model
         return headers
@@ -113,6 +123,20 @@ def _chrome(
     )
 
 
+def _firefox(major: int, platform_ua: str) -> BrowserFingerprint:
+    """Build a desktop-Firefox fingerprint: UA-only, platform-coherent.
+
+    Firefox sends no client hints and its UA carries no scrubbed-build tell
+    (``rv`` always matches the ``Firefox/`` version), so the curation pins a
+    full, platform-coherent UA on the most common desktop shape (Windows /
+    Win64 / x64 — consistent with the Chrome family default). ``header_order``
+    stays empty: curl_cffi's firefox profiles ship the authentic captured
+    order, which must not be overridden.
+    """
+    ua = f"Mozilla/5.0 ({platform_ua}; rv:{major}.0) Gecko/20100101 Firefox/{major}.0"
+    return BrowserFingerprint(user_agent=ua, header_order="", browser="firefox")
+
+
 # Curated fingerprints keyed by recognized chrome target string.
 # Windows NT 10.0; Win64; x64 is the most common desktop shape.
 _FINGERPRINTS: dict[str, BrowserFingerprint] = {
@@ -139,11 +163,14 @@ _FINGERPRINTS: dict[str, BrowserFingerprint] = {
         "Windows",
         "10.0.0",
     ),
+    "firefox147": _firefox(147, "Windows NT 10.0; Win64; x64"),
 }
 
-# curl_cffi's bare aliases ("chrome" defaults to the newest supported target).
+# curl_cffi's bare aliases ("chrome"/"firefox" default to the newest supported
+# target; mirror curl_cffi's own DEFAULT_* resolution).
 _ALIASES: dict[str, str] = {
     "chrome": "chrome150",
+    "firefox": "firefox147",
 }
 
 

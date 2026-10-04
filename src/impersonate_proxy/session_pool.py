@@ -58,7 +58,11 @@ def _issue_request(
         out_headers = cffi_defaults_headers(headers)
         if fp is not None:
             out_headers.update(fp.to_headers())
-    extra_fp = {"header_order": fp.header_order} if fp is not None else None
+    extra_fp = (
+        {"header_order": fp.header_order}
+        if fp is not None and fp.header_order
+        else None
+    )
     if ctx.config.strip_client_leak_headers:
         out_headers = strip_leak_headers(out_headers)
     logger.debug(

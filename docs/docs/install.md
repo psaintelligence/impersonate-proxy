@@ -73,7 +73,8 @@ usage: impersonate-proxy [-h] [--port PORT] [--host HOST]
                          [--tunnel-idle-timeout TUNNEL_IDLE_TIMEOUT]
                          [--block-host BLOCK_HOST] [--proxy-auth PROXY_AUTH]
                          [--allow-from ALLOW_FROM] [--stats-port STATS_PORT]
-                         [--ca-dir CA_DIR] [--debug] [--quiet]
+                         [--max-threads MAX_THREADS] [--ca-dir CA_DIR]
+                         [--debug] [--quiet]
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints
 
@@ -146,6 +147,10 @@ options:
   --stats-port STATS_PORT
                         Serve Prometheus metrics at /metrics on this port (off
                         by default, or IMPERSONATE_PROXY_STATS_PORT)
+  --max-threads MAX_THREADS
+                        Maximum concurrent handler threads; excess connections
+                        wait in the listen backlog (default: 0 = unlimited, or
+                        IMPERSONATE_PROXY_MAX_THREADS)
   --ca-dir, -c CA_DIR   Directory to store/load CA certificate and key
                         (default: ~/.config/impersonate-proxy or
                         IMPERSONATE_PROXY_CA_DIR)
@@ -162,8 +167,8 @@ The two header-mode flags are mutually exclusive. The default mode is
 `IMPERSONATE_PROXY_SESSION_POOL_MAX`, `IMPERSONATE_PROXY_CONNECT_TIMEOUT`,
 `IMPERSONATE_PROXY_READ_TIMEOUT`, `IMPERSONATE_PROXY_MAX_BODY_SIZE`,
 `IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`, `IMPERSONATE_PROXY_BLOCK_HOST`,
-`IMPERSONATE_PROXY_PROXY_AUTH`, `IMPERSONATE_PROXY_ALLOW_FROM`, and
-`IMPERSONATE_PROXY_STATS_PORT`.
+`IMPERSONATE_PROXY_PROXY_AUTH`, `IMPERSONATE_PROXY_ALLOW_FROM`,
+`IMPERSONATE_PROXY_STATS_PORT`, and `IMPERSONATE_PROXY_MAX_THREADS`.
 
 An unknown `--impersonate` target is rejected at startup (exit code 2) with a
 list of valid `curl_cffi` targets — it would otherwise fail lazily on the first

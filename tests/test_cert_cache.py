@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from impersonate_proxy.cert_manager import get_cert_for_host, init_ca
+from impersonate_proxy.cert_manager import _load_ca_files, get_cert_for_host, init_ca
 from impersonate_proxy.context import ProxyConfig, ProxyContext
 
 
@@ -72,3 +72,36 @@ class TestCertCache:
             assert "host4.example.com" in ctx.host_cert_cache
         finally:
             ctx.host_cert_max = old_max
+
+
+class TestInitCaConcurrency:
+    def test_concurrent_first_starts_yield_consistent_pair(self):
+        """Simulated concurrent first starts on one ca_dir must agree on one
+        key/cert pair — never torn or mismatched files."""
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            contexts = [ProxyContext(ProxyConfig()) for _ in range(8)]
+            threads = [
+                threading.Thread(target=init_ca, args=(c, tmpdir))
+                for c in contexts
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+
+            # Every context must have loaded the same, consistent pair.
+            assert all(c.ca_key is not None and c.ca_cert is not None for c in contexts)
+            first_pub = contexts[0].ca_key.public_key().public_numbers()
+            for c in contexts:
+                assert c.ca_key.public_key().public_numbers() == first_pub
+                assert c.ca_cert.public_key().public_numbers() == first_pub
+
+            # The files on disk must form the same consistent pair.
+            final_ctx = ProxyContext(ProxyConfig())
+            assert _load_ca_files(final_ctx, os.path.join(tmpdir, "ca.key"), os.path.join(tmpdir, "ca.crt"))
+            assert final_ctx.ca_key.public_key().public_numbers() == first_pub
+
+            # The claim file must be cleaned up.
+            assert not os.path.exists(os.path.join(tmpdir, ".generate-claim"))
