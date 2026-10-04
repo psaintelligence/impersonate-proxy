@@ -24,6 +24,9 @@ _DEFAULT_RUN_CALL: dict[str, object] = {
     "max_body_size": 512 * 1024 * 1024,
     "tunnel_idle_timeout": 30.0,
     "block_hosts": (),
+    "proxy_auth": None,
+    "allow_from": (),
+    "stats_port": None,
 }
 
 
@@ -72,6 +75,9 @@ def test_config_env_vars():
             max_body_size=512 * 1024 * 1024,
             tunnel_idle_timeout=30.0,
             block_hosts=(),
+            proxy_auth=None,
+            allow_from=(),
+            stats_port=None,
         )
 
 
@@ -114,6 +120,9 @@ def test_config_cli_args():
             max_body_size=512 * 1024 * 1024,
             tunnel_idle_timeout=30.0,
             block_hosts=(),
+            proxy_auth=None,
+            allow_from=(),
+            stats_port=None,
         )
 
 
@@ -165,6 +174,9 @@ def test_config_cli_overrides_env():
             max_body_size=512 * 1024 * 1024,
             tunnel_idle_timeout=30.0,
             block_hosts=(),
+            proxy_auth=None,
+            allow_from=(),
+            stats_port=None,
         )
 
 
@@ -432,6 +444,47 @@ def test_config_new_hardening_flags_env():
         assert kwargs["max_body_size"] == 2048
         assert kwargs["tunnel_idle_timeout"] == 12.5
         assert kwargs["block_hosts"] == ("evil.com",)
+
+
+def test_config_access_control_and_stats_flags():
+    """Test parsing of proxy-auth, allow-from, and stats-port CLI arguments and env vars."""
+    argv = [
+        "impersonate-proxy",
+        "--proxy-auth",
+        "alice:s3cret",
+        "--allow-from",
+        "10.0.0.0/8, 192.168.1.7",
+        "--stats-port",
+        "9100",
+    ]
+    with (
+        patch("sys.argv", argv),
+        patch.dict(os.environ, {}, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["proxy_auth"] == "alice:s3cret"
+        assert kwargs["allow_from"] == ("10.0.0.0/8", "192.168.1.7")
+        assert kwargs["stats_port"] == 9100
+
+    env = {
+        "IMPERSONATE_PROXY_PROXY_AUTH": "bob:hunter2",
+        "IMPERSONATE_PROXY_ALLOW_FROM": "172.16.0.0/12",
+        "IMPERSONATE_PROXY_STATS_PORT": "9200",
+    }
+    with (
+        patch("sys.argv", ["impersonate-proxy"]),
+        patch.dict(os.environ, env, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["proxy_auth"] == "bob:hunter2"
+        assert kwargs["allow_from"] == ("172.16.0.0/12",)
+        assert kwargs["stats_port"] == 9200
 
 
 def test_config_invalid_impersonate_target():

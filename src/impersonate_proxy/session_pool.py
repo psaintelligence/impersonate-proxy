@@ -19,6 +19,7 @@ logger: logging.Logger = logging.getLogger("impersonate-proxy")
 
 def get_session(ctx: ProxyContext) -> cffi_requests.Session:
     """Get a reused curl_cffi session from the pool or create a new one."""
+    ctx.stats.record_session_leased()
     try:
         return ctx.session_pool.get_nowait()
     except queue.Empty:
@@ -27,6 +28,7 @@ def get_session(ctx: ProxyContext) -> cffi_requests.Session:
 
 def release_session(ctx: ProxyContext, session: cffi_requests.Session, *, healthy: bool = True) -> None:
     """Release a session back to the pool if healthy; otherwise close and discard."""
+    ctx.stats.record_session_released()
     if healthy and not ctx.session_pool.full():
         ctx.session_pool.put_nowait(session)
     else:

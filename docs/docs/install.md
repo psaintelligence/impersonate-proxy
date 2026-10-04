@@ -29,9 +29,12 @@ Running the proxy via Docker is recommended for isolated operation and to persis
 
 ```bash
 docker run --rm -p 8899:8899 \
-  -v /tmp/impersonate-certs:/root/.config/impersonate-proxy \
+  -v /tmp/impersonate-certs:/home/impersonate/.config/impersonate-proxy \
   ghcr.io/psaintelligence/impersonate-proxy:latest
 ```
+
+The container runs as a dedicated non-root user (`impersonate`) and ships a
+`HEALTHCHECK` that issues a plain-HTTP request through the local proxy.
 
 ### Docker Compose
 You can spin up the service in the background using docker-compose:
@@ -45,7 +48,7 @@ services:
       - IMPERSONATE_PROXY_IMPERSONATE=chrome
       - IMPERSONATE_PROXY_DEBUG=false
     volumes:
-      - impersonate-proxy-ca-certs:/root/.config/impersonate-proxy
+      - impersonate-proxy-ca-certs:/home/impersonate/.config/impersonate-proxy
 
 volumes:
   impersonate-proxy-ca-certs:
@@ -68,8 +71,9 @@ usage: impersonate-proxy [-h] [--port PORT] [--host HOST]
                          [--read-timeout READ_TIMEOUT]
                          [--max-body-size MAX_BODY_SIZE]
                          [--tunnel-idle-timeout TUNNEL_IDLE_TIMEOUT]
-                         [--block-host BLOCK_HOST] [--ca-dir CA_DIR] [--debug]
-                         [--quiet]
+                         [--block-host BLOCK_HOST] [--proxy-auth PROXY_AUTH]
+                         [--allow-from ALLOW_FROM] [--stats-port STATS_PORT]
+                         [--ca-dir CA_DIR] [--debug] [--quiet]
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints
 
@@ -129,6 +133,19 @@ options:
                         Comma-separated target hostnames to refuse with 403
                         (exact or suffix match: example.com also blocks
                         *.example.com). Or IMPERSONATE_PROXY_BLOCK_HOST
+  --proxy-auth PROXY_AUTH
+                        Require Proxy-Authorization: Basic auth with these
+                        user:password credentials on every request; reply 407
+                        otherwise (e.g. --proxy-auth alice:s3cret or
+                        IMPERSONATE_PROXY_PROXY_AUTH)
+  --allow-from ALLOW_FROM
+                        Comma-separated client allowlist: bare IPs (matched
+                        via the /24 or /64 auto-netblock, e.g. 192.168.1.7) or
+                        explicit CIDRs (e.g. 10.0.0.0/8); other clients are
+                        refused with 403. Or IMPERSONATE_PROXY_ALLOW_FROM
+  --stats-port STATS_PORT
+                        Serve Prometheus metrics at /metrics on this port (off
+                        by default, or IMPERSONATE_PROXY_STATS_PORT)
   --ca-dir, -c CA_DIR   Directory to store/load CA certificate and key
                         (default: ~/.config/impersonate-proxy or
                         IMPERSONATE_PROXY_CA_DIR)
@@ -144,11 +161,36 @@ The two header-mode flags are mutually exclusive. The default mode is
 `IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS`, `IMPERSONATE_PROXY_UPSTREAM_PROXY`,
 `IMPERSONATE_PROXY_SESSION_POOL_MAX`, `IMPERSONATE_PROXY_CONNECT_TIMEOUT`,
 `IMPERSONATE_PROXY_READ_TIMEOUT`, `IMPERSONATE_PROXY_MAX_BODY_SIZE`,
-`IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`, and `IMPERSONATE_PROXY_BLOCK_HOST`.
+`IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`, `IMPERSONATE_PROXY_BLOCK_HOST`,
+`IMPERSONATE_PROXY_PROXY_AUTH`, `IMPERSONATE_PROXY_ALLOW_FROM`, and
+`IMPERSONATE_PROXY_STATS_PORT`.
 
 An unknown `--impersonate` target is rejected at startup (exit code 2) with a
 list of valid `curl_cffi` targets — it would otherwise fail lazily on the first
 request with a 502 and no actionable hint.
+
+---
+
+## Access Control (shared deployments)
+
+The default bind is `127.0.0.1` (local only). When binding to a broader
+interface (`--host 0.0.0.0`, Docker), two orthogonal guardrails prevent the
+proxy from acting as an unauthenticated open relay:
+
+```bash
+# Require Basic proxy authentication (client: curl -x http://alice:s3cret@127.0.0.1:8899)
+impersonate-proxy --host 0.0.0.0 --proxy-auth alice:s3cret
+
+# Restrict which clients may connect (bare IPs use the /24 or /64 auto-netblock)
+impersonate-proxy --host 0.0.0.0 --allow-from 10.0.0.0/8,192.168.1.7
+```
+
+- `--proxy-auth` checks `Proxy-Authorization: Basic` on both CONNECT and
+  plain-HTTP requests in constant time; unauthorized clients receive
+  `407 Proxy Authentication Required` with a `Proxy-Authenticate` challenge.
+- `--allow-from` refuses clients outside the listed netblocks with `403`.
+- Both flags are off by default; local usage and existing Docker flows are
+  unchanged. Combine with `--block-host` for a full per-deployment policy.
 
 ---
 

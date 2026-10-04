@@ -231,6 +231,9 @@ def run(
     max_body_size: int = 512 * 1024 * 1024,
     tunnel_idle_timeout: float = 30.0,
     block_hosts: tuple[str, ...] = (),
+    proxy_auth: str | None = None,
+    allow_from: tuple[str, ...] = (),
+    stats_port: int | None = None,
     ctx: ProxyContext | None = None,
 ) -> None:
     target_ctx = ctx or _GLOBAL_CONTEXT
@@ -251,6 +254,8 @@ def run(
         max_body_size=max_body_size,
         tunnel_idle_timeout=tunnel_idle_timeout,
         block_hosts=block_hosts,
+        proxy_auth=proxy_auth,
+        allow_from=allow_from,
     )
     target_ctx.session_pool_max = session_pool_max
 
@@ -266,6 +271,11 @@ def run(
 
     handler_cls = create_handler_class(target_ctx)
     server = ThreadingHTTPServer((host, port), handler_cls, target_ctx)
+    stats_server = None
+    if stats_port:
+        from impersonate_proxy.stats import start_stats_server
+
+        stats_server = start_stats_server(target_ctx, host, stats_port)
     try:
         curl_cffi_version = importlib.metadata.version("curl_cffi")
     except importlib.metadata.PackageNotFoundError:
@@ -284,6 +294,9 @@ def run(
     finally:
         logger.info("Shutting down proxy server and clearing session pool...")
         server.server_close()
+        if stats_server is not None:
+            stats_server.server_close()
+            stats_server.shutdown()
         target_ctx.clear_session_pool()
 
 
@@ -414,6 +427,27 @@ def main() -> None:
         "match: example.com also blocks *.example.com). Or IMPERSONATE_PROXY_BLOCK_HOST",
     )
     parser.add_argument(
+        "--proxy-auth",
+        default=os.environ.get("IMPERSONATE_PROXY_PROXY_AUTH"),
+        help="Require Proxy-Authorization: Basic auth with these user:password "
+        "credentials on every request; reply 407 otherwise "
+        "(e.g. --proxy-auth alice:s3cret or IMPERSONATE_PROXY_PROXY_AUTH)",
+    )
+    parser.add_argument(
+        "--allow-from",
+        default=os.environ.get("IMPERSONATE_PROXY_ALLOW_FROM", ""),
+        help="Comma-separated client allowlist: bare IPs (matched via the /24 or /64 "
+        "auto-netblock, e.g. 192.168.1.7) or explicit CIDRs (e.g. 10.0.0.0/8); "
+        "other clients are refused with 403. Or IMPERSONATE_PROXY_ALLOW_FROM",
+    )
+    parser.add_argument(
+        "--stats-port",
+        type=int,
+        default=os.environ.get("IMPERSONATE_PROXY_STATS_PORT"),
+        help="Serve Prometheus metrics at /metrics on this port (off by default, "
+        "or IMPERSONATE_PROXY_STATS_PORT)",
+    )
+    parser.add_argument(
         "--ca-dir",
         "-c",
         default=os.environ.get("IMPERSONATE_PROXY_CA_DIR"),
@@ -439,6 +473,7 @@ def main() -> None:
     if error_message:
         parser.error(error_message)
     block_hosts = tuple(h.strip().lower() for h in args.block_host.split(",") if h.strip())
+    allow_from = tuple(e.strip() for e in args.allow_from.split(",") if e.strip())
     run(
         host=args.host,
         port=args.port,
@@ -456,6 +491,9 @@ def main() -> None:
         max_body_size=args.max_body_size,
         tunnel_idle_timeout=args.tunnel_idle_timeout,
         block_hosts=block_hosts,
+        proxy_auth=args.proxy_auth,
+        allow_from=allow_from,
+        stats_port=args.stats_port,
     )
 
 

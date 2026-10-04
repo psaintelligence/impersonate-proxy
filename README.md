@@ -31,7 +31,7 @@ Spin up the proxy container:
 
 ```bash
 docker run --rm -p 8899:8899 \
-  -v /tmp/impersonate-certs:/root/.config/impersonate-proxy \
+  -v /tmp/impersonate-certs:/home/impersonate/.config/impersonate-proxy \
   ghcr.io/psaintelligence/impersonate-proxy:latest
 ```
 

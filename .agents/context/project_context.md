@@ -51,6 +51,8 @@ The proxy operates in two primary modes depending on whether it receives plain H
    - `--block-host a.com,b.com` (exact or suffix match) refuses CONNECT/plain-HTTP targets with 403 before any tunnel or upstream request.
    - Unknown `--impersonate` targets are rejected at startup (exit 2) via `_impersonate_error_message()` in `main.py`.
    - Hop-by-hop header stripping is a single shared `_HOP_BY_HOP_HEADERS` frozenset in `server.py` used by both the MITM and plain-HTTP paths.
+   - Open-proxy guardrails (off by default): `--proxy-auth user:password` (constant-time Basic check on CONNECT before `200`, 407 otherwise) and `--allow-from` (bare-IP auto-netblock or CIDR, 403 for foreign clients). Deny-list responses flow through `_reject_client()` which also feeds the stats counters.
+   - Optional `--stats-port` exposes Prometheus metrics at `/metrics` (`stats.py`): requests per mode, upstream failures, 4xx/5xx classes, session-pool high-water, cert-cache size. Counters live on `ctx.stats` (always on), endpoint gated.
 
 ---
 

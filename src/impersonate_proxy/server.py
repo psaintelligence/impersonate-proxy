@@ -1,6 +1,8 @@
 """Proxy request handler and multithreaded HTTP server."""
 
+import base64
 import contextlib
+import hmac
 import http.client
 import ipaddress
 import logging
@@ -57,6 +59,53 @@ def is_host_blocked(ctx: ProxyContext, host: str) -> bool:
     return False
 
 
+def is_client_allowed(ctx: ProxyContext, client_ip: str) -> bool:
+    """Return True when client_ip passes ProxyConfig.allow_from (empty allows all).
+
+    Entries may be a bare IP — matched via the same /24 (IPv4) or /64 (IPv6)
+    auto-netblock used for logging — or an explicit CIDR netblock matched via
+    :mod:`ipaddress`. An unverifiable client IP is denied while an allowlist is
+    active.
+    """
+    allow_from = ctx.config.allow_from
+    if not allow_from:
+        return True
+    try:
+        addr = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    for entry in allow_from:
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            if "/" in entry:
+                if addr in ipaddress.ip_network(entry, strict=False):
+                    return True
+            elif get_client_netblock(str(addr)) == get_client_netblock(entry):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def proxy_auth_ok(ctx: ProxyContext, auth_header: str | None) -> bool:
+    """Return True when the client's Proxy-Authorization header is acceptable.
+
+    ``ProxyConfig.proxy_auth`` holds ``user:password`` credentials; the expected
+    ``Basic`` token is derived from it and compared in constant time. When no
+    credentials are configured, every request passes.
+    """
+    credentials = ctx.config.proxy_auth
+    if not credentials:
+        return True
+    scheme, _, token = (auth_header or "").partition(" ")
+    if scheme.strip().lower() != "basic":
+        return False
+    expected = base64.b64encode(credentials.encode()).decode()
+    return hmac.compare_digest(token.strip(), expected)
+
+
 def _wants_keep_alive(headers: dict[str, str], version: str) -> bool:
     """Return whether the client expects the connection to persist after this request.
 
@@ -92,6 +141,7 @@ def raw_tunnel(ctx: ProxyContext, client_sock: socket.socket, host: str, port: i
     except Exception as e:
         logger.error(f"Raw tunnel connect failed for {ctx.show_identifying(f'{host}:{port}')}: {e}")
         return
+    ctx.stats.record_request("raw_tunnel")
     try:
         while True:
             readable, _, _ = select.select([client_sock, upstream], [], [], ctx.config.tunnel_idle_timeout)
@@ -122,6 +172,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def _reject_client(self, code: int, reason: str) -> None:
+        """Send an error response to the client, close the connection, and record it."""
+        if code == 407:
+            self.send_response(code, reason)
+            self.send_header("Proxy-Authenticate", 'Basic realm="impersonate-proxy"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            self.send_error(code, reason)
+        self.close_connection = True
+        self.ctx.stats.record_status(code)
+
     def do_CONNECT(self) -> None:
         host, _, port_str = self.path.rpartition(":")
         host = host.strip("[]")
@@ -132,12 +194,21 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Bad host:port")
             return
 
+        client_ip = self.client_address[0]
+
+        if not is_client_allowed(self.ctx, client_ip):
+            logger.warning(f"CONNECT from disallowed client: {get_client_netblock(client_ip)}")
+            self._reject_client(403, "Forbidden client")
+            return
+        if not proxy_auth_ok(self.ctx, self.headers.get("Proxy-Authorization")):
+            logger.warning(f"CONNECT with missing/invalid proxy auth from {get_client_netblock(client_ip)}")
+            self._reject_client(407, "Proxy Authentication Required")
+            return
         if is_host_blocked(self.ctx, host):
             logger.warning(f"CONNECT to blocked host: {self.ctx.show_identifying(host)}")
-            self.send_error(403, "Forbidden host")
+            self._reject_client(403, "Forbidden host")
             return
 
-        client_ip = self.client_address[0]
         netblock = get_client_netblock(client_ip)
         if not self.ctx.config.quiet:
             logger.info(f"CONNECT request from {netblock} to {host}")
@@ -288,11 +359,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             raise ConnectionError("client closed during body read")
         return body
 
-    @staticmethod
-    def _write_mitm_error(wfile, code: int, reason: str) -> None:
+    def _write_mitm_error(self, wfile, code: int, reason: str) -> None:
         """Write a minimal error response inside the decrypted tunnel (closes the tunnel)."""
         wfile.write(f"HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
         wfile.flush()
+        self.ctx.stats.record_status(code)
 
     def _write_chunked_response(self, wfile, resp, keep_alive: bool) -> None:
         """Stream an upstream response to the client as a chunked HTTP/1.1 message."""
@@ -333,13 +404,17 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             f"CONNECT-MITM proxying request: {method} {self.ctx.show_identifying(url)} "
             f"(headers={sanitize_headers(fwd_headers)})"
         )
+        self.ctx.stats.record_request("mitm")
         r = do_request(self.ctx, method, url, fwd_headers, body, allow_redirects=False)
         if r is None:
+            self.ctx.stats.record_upstream_failure()
+            self.ctx.stats.record_status(502)
             wfile.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             wfile.flush()
             return None
         try:
             self._write_chunked_response(wfile, r, keep_alive)
+            self.ctx.stats.record_status(r.status_code)
             if (r.status_code >= 400 or self.ctx.config.debug) and not self.ctx.config.quiet:
                 logger.info(f"CONNECT-MITM {method} {self.ctx.show_identifying(url)} -> {r.status_code}")
             return r.status_code
@@ -347,20 +422,28 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             r.close()
 
     def _proxy(self) -> None:
+        client_ip = self.client_address[0]
+        netblock = get_client_netblock(client_ip)
+        if not is_client_allowed(self.ctx, client_ip):
+            logger.warning(f"HTTP Proxy request from disallowed client: {netblock}")
+            self._reject_client(403, "Forbidden client")
+            return
+
         url = self.path
         if not url.startswith("http"):
             logger.warning(f"HTTP Proxy bad request: {self.ctx.show_identifying(url)}")
-            self.send_error(400, "Absolute URL required")
+            self._reject_client(400, "Absolute URL required")
             return
 
-        client_ip = self.client_address[0]
-        netblock = get_client_netblock(client_ip)
         parsed = urllib.parse.urlparse(url)
         host = parsed.hostname or ""
+        if not proxy_auth_ok(self.ctx, self.headers.get("Proxy-Authorization")):
+            logger.warning(f"HTTP Proxy request with missing/invalid proxy auth from {netblock}")
+            self._reject_client(407, "Proxy Authentication Required")
+            return
         if is_host_blocked(self.ctx, host):
             logger.warning(f"HTTP Proxy request to blocked host: {self.ctx.show_identifying(host)}")
-            self.send_error(403, "Forbidden host")
-            self.close_connection = True
+            self._reject_client(403, "Forbidden host")
             return
         if not self.ctx.config.quiet:
             logger.info(f"{self.command} request from {netblock} to {host}")
@@ -375,13 +458,11 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 length = -1
             if length < 0:
-                self.send_error(400, "Invalid Content-Length")
-                self.close_connection = True
+                self._reject_client(400, "Invalid Content-Length")
                 return
             if length > self.ctx.config.max_body_size:
                 logger.warning(f"HTTP Proxy: request body of {length} bytes exceeds max_body_size; sending 413")
-                self.send_error(413, "Payload Too Large")
-                self.close_connection = True
+                self._reject_client(413, "Payload Too Large")
                 return
             body = self.rfile.read(length)
 
@@ -389,11 +470,15 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             f"HTTP Proxy proxying request: {self.command} {self.ctx.show_identifying(url)} (headers={sanitize_headers(headers)})"
         )
 
+        self.ctx.stats.record_request("plain_http")
         resp = do_request(self.ctx, self.command, url, headers, body)
         if resp is None:
             logger.error(f"HTTP Proxy upstream request failed for: {self.ctx.show_identifying(url)}")
+            self.ctx.stats.record_upstream_failure()
+            self.ctx.stats.record_status(502)
             self.send_error(502, "Upstream request failed")
             return
+        self.ctx.stats.record_status(resp.status_code)
 
         try:
             is_head = self.command == "HEAD"

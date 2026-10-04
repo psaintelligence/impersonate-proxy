@@ -79,6 +79,54 @@ The proxy caps the client request body it will buffer, per request: `--max-body-
 
 ---
 
+## 3b. Open-Proxy Guardrails
+
+By default the proxy binds to `127.0.0.1` and requires neither authentication
+nor client access control. When exposing it on a broader interface
+(`--host 0.0.0.0`, Docker), two orthogonal flags keep it from acting as an
+unauthenticated open relay:
+
+- **`--proxy-auth user:password`** (env `IMPERSONATE_PROXY_PROXY_AUTH`): every
+  CONNECT and plain-HTTP request must carry
+  `Proxy-Authorization: Basic <token>` matching the configured credentials
+  (verified in constant time via `hmac.compare_digest`). Unauthorized clients
+  receive `407 Proxy Authentication Required` with a `Proxy-Authenticate`
+  challenge — for CONNECT this happens *before* `200 Connection established`,
+  so no tunnel is ever opened for unauthenticated clients.
+- **`--allow-from`** (env `IMPERSONATE_PROXY_ALLOW_FROM`): a comma-separated
+  client allowlist. Entries are either bare IPs — matched via the same
+  `/24` (IPv4) or `/64` (IPv6) auto-netblock used in logging — or explicit CIDR
+  netblocks (`10.0.0.0/8`). Clients outside the list receive `403`; an
+  unverifiable client address is denied while an allowlist is active.
+
+Both are off by default: local usage and existing Docker flows are unchanged.
+
+---
+
+## 3c. Optional Stats Endpoint (Prometheus)
+
+`--stats-port PORT` (env `IMPERSONATE_PROXY_STATS_PORT`, off by default) starts
+a tiny HTTP server serving Prometheus text-format metrics at `/metrics`, bound
+to the same host as the proxy:
+
+| Metric | Type | Meaning |
+|--------|------|---------|
+| `impersonate_proxy_requests_total{mode=...}` | counter | Client requests forwarded upstream, by mode (`plain_http`, `mitm`, `raw_tunnel`) |
+| `impersonate_proxy_upstream_failures_total` | counter | Upstream requests that failed before producing a response (surfaced to the client as 502) |
+| `impersonate_proxy_client_status_total{status_class=...}` | counter | Client-facing responses with status ≥ 400, by class (`4xx`/`5xx`) — includes early rejects (400/403/407/413) |
+| `impersonate_proxy_session_pool_high_water` | gauge | Maximum concurrently leased `curl_cffi` sessions |
+| `impersonate_proxy_cert_cache_size` | gauge | Host SSL contexts currently cached |
+
+Counters are always active (negligible overhead); only the HTTP endpoint is
+gated behind the flag.
+
+```bash
+impersonate-proxy --stats-port 9100 &
+curl -s http://127.0.0.1:9100/metrics
+```
+
+---
+
 ## 4. Header Modes
 
 This is one of the most important — and often overlooked — mechanisms in the proxy. It is what makes the difference between bypassing a WAF and getting blocked.

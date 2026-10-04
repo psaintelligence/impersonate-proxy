@@ -8,6 +8,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from impersonate_proxy.stats import ProxyStats
+
 if TYPE_CHECKING:
     from cryptography import x509
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -41,6 +43,11 @@ class ProxyConfig:
     tunnel_idle_timeout: float = 30.0
     # Target hostnames to refuse (exact or suffix match). Empty allows all.
     block_hosts: tuple[str, ...] = ()
+    # user:password required in Proxy-Authorization: Basic (None disables auth).
+    proxy_auth: str | None = None
+    # Client allowlist entries: bare IP (auto /24|/64 netblock) or explicit CIDR.
+    # Empty allows all clients.
+    allow_from: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.header_mode not in ("passthrough", "cffi-defaults"):
@@ -61,6 +68,7 @@ class ProxyContext:
         session_pool_max: int | None = None,
     ) -> None:
         self.config: ProxyConfig = config or ProxyConfig()
+        self.stats: ProxyStats = ProxyStats()
         self.ca_key: ec.EllipticCurvePrivateKey | None = None
         self.ca_cert: x509.Certificate | None = None
         self.leaf_key: ec.EllipticCurvePrivateKey | None = None
