@@ -77,19 +77,7 @@ known-first-party = ["impersonate_proxy"]
 
 [tool.basedpyright]
 pythonVersion = "3.12"
-typeCheckingMode = "standard"
-reportMissingImports = "none"
-reportMissingTypeStubs = "none"
-reportUnknownMemberType = "none"
-reportUnknownArgumentType = "none"
-reportUnknownVariableType = "none"
-reportUnknownLambdaType = "none"
-reportUnknownParameterType = "none"
-reportGeneralTypeIssues = "none"
-reportArgumentType = "none"
-reportAttributeAccessIssue = "none"
-reportOptionalMemberAccess = "none"
-reportPossiblyUnboundVariable = "none"
+typeCheckingMode = "strict"
 include = ["src/impersonate_proxy"]
 exclude = ["**/node_modules", "**/__pycache__", "venv", ".venv"]
 

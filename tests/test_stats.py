@@ -17,25 +17,23 @@ class TestProxyStatsCounters:
         stats.record_request("mitm")
         stats.record_request("mitm")
         stats.record_request("plain_http")
-        snapshot = stats.snapshot(0)
-        assert snapshot["requests"] == {"mitm": 2, "plain_http": 1}
+        assert stats.snapshot(0).requests == {"mitm": 2, "plain_http": 1}
 
     def test_status_classes_ignore_successes(self):
         stats = ProxyStats()
         stats.record_status(200)
         stats.record_status(302)
-        assert stats.snapshot(0)["status_classes"] == {}
+        assert stats.snapshot(0).status_classes == {}
         stats.record_status(404)
         stats.record_status(413)
         stats.record_status(502)
-        snapshot = stats.snapshot(0)
-        assert snapshot["status_classes"] == {"4xx": 2, "5xx": 1}
+        assert stats.snapshot(0).status_classes == {"4xx": 2, "5xx": 1}
 
     def test_upstream_failures(self):
         stats = ProxyStats()
         stats.record_upstream_failure()
         stats.record_upstream_failure()
-        assert stats.snapshot(0)["upstream_failures"] == 2
+        assert stats.snapshot(0).upstream_failures == 2
 
     def test_pool_high_water_tracks_concurrency(self):
         stats = ProxyStats()
@@ -45,13 +43,13 @@ class TestProxyStatsCounters:
         stats.record_session_released()
         stats.record_session_leased()
         stats.record_session_leased()
-        assert stats.snapshot(0)["pool_high_water"] == 4
+        assert stats.snapshot(0).pool_high_water == 4
 
     def test_release_never_goes_negative(self):
         stats = ProxyStats()
         stats.record_session_released()
         stats.record_session_leased()
-        assert stats.snapshot(0)["pool_high_water"] == 1
+        assert stats.snapshot(0).pool_high_water == 1
 
 
 class TestRenderMetrics:

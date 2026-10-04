@@ -6,7 +6,7 @@ import ssl
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from impersonate_proxy.stats import ProxyStats
 
@@ -79,7 +79,7 @@ class ProxyContext:
 
         effective_pool_max = session_pool_max if session_pool_max is not None else self.config.session_pool_max
         self.session_pool_max: int = effective_pool_max
-        self.session_pool: queue.Queue[cffi_requests.Session] = queue.Queue(maxsize=effective_pool_max)
+        self.session_pool: queue.Queue[cffi_requests.Session[Any]] = queue.Queue(maxsize=effective_pool_max)
 
     def show_identifying(self, val: str) -> str:
         """Return val if debug mode is active, otherwise '[redacted]'."""

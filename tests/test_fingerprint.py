@@ -114,27 +114,25 @@ class TestFingerprintThroughProxy:
         import tempfile
         import threading
         import time
-        from http.server import HTTPServer
-        from socketserver import ThreadingMixIn
 
         import requests
 
-        from impersonate_proxy import main as impersonate_proxy
+        from impersonate_proxy.cert_manager import init_ca
+        from impersonate_proxy.context import ProxyConfig, ProxyContext
+        from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
         def _free_port():
             with socket.socket() as s:
                 s.bind(("127.0.0.1", 0))
                 return s.getsockname()[1]
 
-        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
-
         port = _free_port()
         proxy_url = f"http://127.0.0.1:{port}"
         with tempfile.TemporaryDirectory() as tmpdir:
-            impersonate_proxy._init_ca(tmpdir)
+            ctx = ProxyContext(ProxyConfig(ca_dir=tmpdir))
+            init_ca(ctx, tmpdir)
             ca_cert = os.path.join(tmpdir, "ca.crt")
-            server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
+            server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             for _ in range(50):
@@ -155,6 +153,7 @@ class TestFingerprintThroughProxy:
                 text = resp.text
             finally:
                 server.shutdown()
+                ctx.clear_session_pool()
 
         # Strings the reflection service echoes back verbatim.
         assert "Chrome/150.0.7871.189" in text, f"scrubbed or unexpected UA; got:\n{text}"
@@ -176,27 +175,25 @@ class TestFingerprintThroughProxy:
         import tempfile
         import threading
         import time
-        from http.server import HTTPServer
-        from socketserver import ThreadingMixIn
 
         import requests
 
-        from impersonate_proxy import main as impersonate_proxy
+        from impersonate_proxy.cert_manager import init_ca
+        from impersonate_proxy.context import ProxyConfig, ProxyContext
+        from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
         def _free_port():
             with socket.socket() as s:
                 s.bind(("127.0.0.1", 0))
                 return s.getsockname()[1]
 
-        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
-
         port = _free_port()
         proxy_url = f"http://127.0.0.1:{port}"
         with tempfile.TemporaryDirectory() as tmpdir:
-            impersonate_proxy._init_ca(tmpdir)
+            ctx = ProxyContext(ProxyConfig(ca_dir=tmpdir))
+            init_ca(ctx, tmpdir)
             ca_cert = os.path.join(tmpdir, "ca.crt")
-            server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
+            server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             for _ in range(50):
@@ -217,6 +214,7 @@ class TestFingerprintThroughProxy:
                 data = resp.json()
             finally:
                 server.shutdown()
+                ctx.clear_session_pool()
 
         frames = data["http2"]["sent_frames"]
         headers: list[str] = []

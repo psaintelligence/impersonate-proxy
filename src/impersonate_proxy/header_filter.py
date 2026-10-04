@@ -53,7 +53,7 @@ _DROP_HEADERS: set[str] = {
 
 def sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
     """Return headers with sensitive values redacted."""
-    sanitized = {}
+    sanitized: dict[str, str] = {}
     for k, v in headers.items():
         if k.lower() in _SENSITIVE_HEADERS:
             sanitized[k] = "[redacted-sensitive]"

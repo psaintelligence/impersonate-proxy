@@ -261,7 +261,7 @@ def test_run_keyboard_interrupt():
     with (
         patch("socketserver.BaseServer.serve_forever", side_effect=KeyboardInterrupt),
         patch("socketserver.TCPServer.server_close") as mock_close,
-        patch("impersonate_proxy.main._init_ca"),
+        patch("impersonate_proxy.cert_manager.init_ca"),
         patch.dict(os.environ, {}, clear=True),
         patch.object(impersonate_proxy.logger, "info") as mock_info,
     ):

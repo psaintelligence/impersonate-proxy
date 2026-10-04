@@ -20,13 +20,13 @@ import tempfile
 import threading
 import time
 from collections.abc import Generator
-from http.server import HTTPServer
-from socketserver import ThreadingMixIn
 
 import pytest
 import requests
 
-from impersonate_proxy import main as proxy
+from impersonate_proxy.cert_manager import init_ca
+from impersonate_proxy.context import ProxyConfig, ProxyContext
+from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
 logger = logging.getLogger("impersonate-proxy-test")
 
@@ -39,10 +39,6 @@ def _get_free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-class _ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
 
 
 @pytest.fixture(
@@ -73,21 +69,23 @@ def proxy_server(request) -> Generator[tuple[str, str, str, str, bool], None, No
     Yields (proxy_url, ca_cert_path, impersonate_profile, header_mode, strip_leak).
     """
     impersonate_profile, header_mode, strip_leak = request.param
-    orig_impersonate = proxy._IMPERSONATE
-    orig_header_mode = proxy._HEADER_MODE
-    orig_strip = proxy._STRIP_CLIENT_LEAK_HEADERS
-    proxy._IMPERSONATE = impersonate_profile
-    proxy._HEADER_MODE = header_mode
-    proxy._STRIP_CLIENT_LEAK_HEADERS = strip_leak
 
     port = _get_free_port()
     proxy_url = f"http://127.0.0.1:{port}"
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        proxy._init_ca(tmpdir)
+        ctx = ProxyContext(
+            ProxyConfig(
+                ca_dir=tmpdir,
+                impersonate=impersonate_profile,
+                header_mode=header_mode,
+                strip_client_leak_headers=strip_leak,
+            )
+        )
+        init_ca(ctx, tmpdir)
         ca_cert_path = f"{tmpdir}/ca.crt"
 
-        server = _ThreadingHTTPServer(("127.0.0.1", port), proxy.ProxyHandler)
+        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
@@ -102,10 +100,8 @@ def proxy_server(request) -> Generator[tuple[str, str, str, str, bool], None, No
         try:
             yield proxy_url, ca_cert_path, impersonate_profile, header_mode, strip_leak
         finally:
-            proxy._IMPERSONATE = orig_impersonate
-            proxy._HEADER_MODE = orig_header_mode
-            proxy._STRIP_CLIENT_LEAK_HEADERS = orig_strip
             server.shutdown()
+            ctx.clear_session_pool()
 
 
 def _get(

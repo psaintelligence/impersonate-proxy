@@ -1,6 +1,9 @@
 """Unit tests for utility and helper functions."""
 
-from impersonate_proxy import main as impersonate_proxy
+from impersonate_proxy.context import ProxyConfig, ProxyContext
+from impersonate_proxy.header_filter import sanitize_headers
+from impersonate_proxy.server import get_client_netblock
+from impersonate_proxy.session_pool import get_session, release_session
 
 
 class TestHostPortParsing:
@@ -28,39 +31,37 @@ class TestHostPortParsing:
 
 class TestSessionManagement:
     def test_get_session_returns_session(self):
-        session = impersonate_proxy._get_session()
+        ctx = ProxyContext(ProxyConfig())
+        session = get_session(ctx)
         assert session is not None
-        impersonate_proxy._release_session(session)
+        release_session(ctx, session)
 
     def test_session_release_and_reuse(self):
-        # Clear pool first
-        impersonate_proxy._clear_session_pool()
-        s1 = impersonate_proxy._get_session()
-        impersonate_proxy._release_session(s1)
+        ctx = ProxyContext(ProxyConfig())
+        s1 = get_session(ctx)
+        release_session(ctx, s1)
         # Reuse same session from pool
-        s2 = impersonate_proxy._get_session()
+        s2 = get_session(ctx)
         assert s1 is s2
-        impersonate_proxy._release_session(s2)
+        release_session(ctx, s2)
 
     def test_get_session_concurrency_creates_new_sessions(self):
-        impersonate_proxy._clear_session_pool()
-        s1 = impersonate_proxy._get_session()
-        s2 = impersonate_proxy._get_session()
+        ctx = ProxyContext(ProxyConfig())
+        s1 = get_session(ctx)
+        s2 = get_session(ctx)
         assert s1 is not s2
-        impersonate_proxy._release_session(s1)
-        impersonate_proxy._release_session(s2)
+        release_session(ctx, s1)
+        release_session(ctx, s2)
 
 
 class TestRedactionUtilities:
     def test_show_identifying_redacts_by_default(self):
-        impersonate_proxy._DEBUG = False
-        assert impersonate_proxy._show_identifying("secret-domain.com") == "[redacted]"
+        ctx = ProxyContext(ProxyConfig(debug=False))
+        assert ctx.show_identifying("secret-domain.com") == "[redacted]"
 
     def test_show_identifying_reveals_in_debug(self):
-        impersonate_proxy._DEBUG = True
-        assert impersonate_proxy._show_identifying("secret-domain.com") == "secret-domain.com"
-        # Reset debug flag
-        impersonate_proxy._DEBUG = False
+        ctx = ProxyContext(ProxyConfig(debug=True))
+        assert ctx.show_identifying("secret-domain.com") == "secret-domain.com"
 
     def test_sanitize_headers_redacts_sensitive_keys(self):
         headers = {
@@ -69,7 +70,7 @@ class TestRedactionUtilities:
             "Cookie": "session=abc",
             "X-Custom-Header": "value",
         }
-        sanitized = impersonate_proxy._sanitize_headers(headers)
+        sanitized = sanitize_headers(headers)
         assert sanitized["Host"] == "example.com"
         assert sanitized["X-Custom-Header"] == "value"
         assert sanitized["Authorization"] == "[redacted-sensitive]"
@@ -78,12 +79,12 @@ class TestRedactionUtilities:
 
 class TestNetblockUtilities:
     def test_ipv4_netblock(self):
-        assert impersonate_proxy._get_client_netblock("192.168.1.55") == "192.168.1.0/24"
-        assert impersonate_proxy._get_client_netblock("127.0.0.1") == "127.0.0.0/24"
+        assert get_client_netblock("192.168.1.55") == "192.168.1.0/24"
+        assert get_client_netblock("127.0.0.1") == "127.0.0.0/24"
 
     def test_ipv6_netblock(self):
-        assert impersonate_proxy._get_client_netblock("::1") == "::/64"
-        assert impersonate_proxy._get_client_netblock("2001:db8:abcd:0012::1") == "2001:db8:abcd:12::/64"
+        assert get_client_netblock("::1") == "::/64"
+        assert get_client_netblock("2001:db8:abcd:0012::1") == "2001:db8:abcd:12::/64"
 
     def test_invalid_ip_fallback(self):
-        assert impersonate_proxy._get_client_netblock("invalid-ip") == "invalid-ip"
+        assert get_client_netblock("invalid-ip") == "invalid-ip"

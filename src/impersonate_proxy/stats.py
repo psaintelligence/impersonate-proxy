@@ -7,6 +7,7 @@ only started when ``--stats-port`` is given.
 import logging
 import threading
 from collections import Counter
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import TYPE_CHECKING
@@ -15,6 +16,17 @@ if TYPE_CHECKING:
     from impersonate_proxy.context import ProxyContext
 
 logger: logging.Logger = logging.getLogger("impersonate-proxy")
+
+
+@dataclass(frozen=True)
+class MetricsSnapshot:
+    """A consistent copy of all stats counters plus gauges supplied at scrape time."""
+
+    requests: dict[str, int]
+    status_classes: dict[str, int]
+    upstream_failures: int
+    pool_high_water: int
+    cert_cache_size: int
 
 
 class ProxyStats:
@@ -57,50 +69,48 @@ class ProxyStats:
         with self._lock:
             self._sessions_leased = max(0, self._sessions_leased - 1)
 
-    def snapshot(self, cert_cache_size: int) -> dict[str, object]:
+    def snapshot(self, cert_cache_size: int) -> MetricsSnapshot:
         """Return a consistent copy of all counters plus the given gauge."""
         with self._lock:
-            return {
-                "requests": dict(self._requests),
-                "status_classes": dict(self._status_classes),
-                "upstream_failures": self._upstream_failures,
-                "pool_high_water": self._pool_high_water,
-                "cert_cache_size": cert_cache_size,
-            }
+            return MetricsSnapshot(
+                requests=dict(self._requests),
+                status_classes=dict(self._status_classes),
+                upstream_failures=self._upstream_failures,
+                pool_high_water=self._pool_high_water,
+                cert_cache_size=cert_cache_size,
+            )
 
 
-def render_metrics(snapshot: dict[str, object]) -> str:
+def render_metrics(snapshot: MetricsSnapshot) -> str:
     """Render a stats snapshot in Prometheus text format."""
-    requests: dict[str, int] = snapshot["requests"]  # type: ignore[assignment]
-    status_classes: dict[str, int] = snapshot["status_classes"]  # type: ignore[assignment]
     lines = [
         "# HELP impersonate_proxy_requests_total Total client requests forwarded upstream by mode.",
         "# TYPE impersonate_proxy_requests_total counter",
     ]
-    for mode in sorted(requests):
-        lines.append(f'impersonate_proxy_requests_total{{mode="{mode}"}} {requests[mode]}')
+    for mode in sorted(snapshot.requests):
+        lines.append(f'impersonate_proxy_requests_total{{mode="{mode}"}} {snapshot.requests[mode]}')
     lines.extend(
         [
             "# HELP impersonate_proxy_upstream_failures_total Upstream requests that failed before producing a response.",
             "# TYPE impersonate_proxy_upstream_failures_total counter",
-            f"impersonate_proxy_upstream_failures_total {snapshot['upstream_failures']}",
+            f"impersonate_proxy_upstream_failures_total {snapshot.upstream_failures}",
             "# HELP impersonate_proxy_client_status_total Client-facing responses with status >= 400 by class,",
             "# including early rejects (403/407/413) and 502 upstream failures.",
             "# TYPE impersonate_proxy_client_status_total counter",
         ]
     )
-    for status_class in sorted(status_classes):
+    for status_class in sorted(snapshot.status_classes):
         lines.append(
-            f'impersonate_proxy_client_status_total{{status_class="{status_class}"}} {status_classes[status_class]}'
+            f'impersonate_proxy_client_status_total{{status_class="{status_class}"}} {snapshot.status_classes[status_class]}'
         )
     lines.extend(
         [
             "# HELP impersonate_proxy_session_pool_high_water Maximum concurrently leased curl_cffi sessions.",
             "# TYPE impersonate_proxy_session_pool_high_water gauge",
-            f"impersonate_proxy_session_pool_high_water {snapshot['pool_high_water']}",
+            f"impersonate_proxy_session_pool_high_water {snapshot.pool_high_water}",
             "# HELP impersonate_proxy_cert_cache_size Number of host SSL contexts currently cached.",
             "# TYPE impersonate_proxy_cert_cache_size gauge",
-            f"impersonate_proxy_cert_cache_size {snapshot['cert_cache_size']}",
+            f"impersonate_proxy_cert_cache_size {snapshot.cert_cache_size}",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -115,7 +125,7 @@ def start_stats_server(ctx: "ProxyContext", host: str, port: int) -> HTTPServer:
     logger.info(f"Stats endpoint serving Prometheus metrics on {host}:{port}/metrics")
 
     class MetricsHandler(BaseHTTPRequestHandler):
-        def log_message(self, format, *args):
+        def log_message(self, format: str, *args: object) -> None:
             pass
 
         def do_GET(self) -> None:

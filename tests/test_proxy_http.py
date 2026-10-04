@@ -5,12 +5,12 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import patch
 
 import pytest
 import requests
 
-from impersonate_proxy import main as impersonate_proxy
+from impersonate_proxy.context import ProxyConfig, ProxyContext
+from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
 
 class MockUpstreamHandler(BaseHTTPRequestHandler):
@@ -74,50 +74,48 @@ def upstream_server():
     server = HTTPServer(("127.0.0.1", port), MockUpstreamHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    for _ in range(50):
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
+            s.close()
+            break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("upstream server never became ready")
     yield f"http://127.0.0.1:{port}"
     server.shutdown()
 
 
 @pytest.fixture(scope="module")
-def proxy_server():
-    """Start the TLS impersonate proxy."""
+def proxy_ctx():
+    """ProxyContext shared by the proxy_server fixture and quiet-mode tests."""
+    return ProxyContext(ProxyConfig())
+
+
+@pytest.fixture(scope="module")
+def proxy_server(proxy_ctx):
+    """Start the TLS impersonate proxy bound to a dedicated ProxyContext."""
     port = _get_free_port()
     proxy_url = f"http://127.0.0.1:{port}"
 
-    def _mock_do_request(method, url, headers, body, stream=False):
+    server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(proxy_ctx), proxy_ctx)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    for _ in range(50):
         try:
-            return requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                data=body,
-                timeout=10,
-                allow_redirects=False,
-                stream=stream,
-            )
-        except Exception:
-            return None
+            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
+            s.close()
+            break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("proxy server never became ready")
 
-    with patch.object(impersonate_proxy, "_do_request", _mock_do_request):
-        from socketserver import ThreadingMixIn
-
-        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
-
-        server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-
-        for _ in range(50):
-            try:
-                s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-                s.close()
-                break
-            except OSError:
-                time.sleep(0.1)
-
-        yield proxy_url
-        server.shutdown()
+    yield proxy_url
+    server.shutdown()
+    proxy_ctx.clear_session_pool()
 
 
 class TestProxyHTTP:
@@ -243,23 +241,25 @@ class TestProxyHTTP:
                     break
             assert log_found, f"Expected connection log not found. Logs: {[r.message for r in caplog.records]}"
 
-    def test_proxy_quiet_logging(self, proxy_server, upstream_server, caplog):
-        """Proxy should not log traffic when _QUIET is True."""
+    def test_proxy_quiet_logging(self, proxy_ctx, proxy_server, upstream_server, caplog):
+        """Proxy should not log traffic when quiet mode is True.
+
+        Only records tied to this test's unique path are judged: earlier tests'
+        handler threads may still be emitting through the shared logger name
+        while this test runs.
+        """
         import logging
 
-        impersonate_proxy._QUIET = True
+        proxy_ctx.config.quiet = True
         try:
             with caplog.at_level(logging.INFO, logger="impersonate-proxy"):
-                resp = requests.get(f"{upstream_server}/hello", proxies={"http": proxy_server})
+                resp = requests.get(f"{upstream_server}/quiet-mode-check", proxies={"http": proxy_server})
                 assert resp.status_code == 200
 
-                # Verify no traffic logs are recorded
-                for record in caplog.records:
-                    assert "request from" not in record.message
-                    assert "HTTP Proxy" not in record.message
-                    assert "CONNECT" not in record.message
+            for record in caplog.records:
+                assert "quiet-mode-check" not in record.message, f"quiet mode logged traffic: {record.message}"
         finally:
-            impersonate_proxy._QUIET = False
+            proxy_ctx.config.quiet = False
 
     def test_upstream_proxy_configuration(self):
         """Verify that upstream_proxy is passed to curl_cffi request call."""

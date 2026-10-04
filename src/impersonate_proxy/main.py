@@ -29,189 +29,38 @@ import logging
 import os
 import signal
 import sys
-import types
 
-from impersonate_proxy import cert_manager, session_pool
-from impersonate_proxy.cert_manager import get_cert_for_host, init_ca
+from impersonate_proxy import cert_manager
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.header_filter import (
-    cffi_defaults_headers,
-    sanitize_headers,
-    strip_leak_headers,
-)
-from impersonate_proxy.server import (
-    ProxyRequestHandler,
-    ThreadingHTTPServer,
-    create_handler_class,
-    get_client_netblock,
-    raw_tunnel,
-)
+from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
 logger: logging.Logger = logging.getLogger("impersonate-proxy")
 
-# Global singleton context for backward-compatibility with tests & direct module references
-_GLOBAL_CONTEXT: ProxyContext = ProxyContext()
 
-# Global references for direct backward-compatibility
-_HOST_CERT_CACHE = _GLOBAL_CONTEXT.host_cert_cache
-_HOST_CERT_LOCK = _GLOBAL_CONTEXT.host_cert_lock
+def _sigterm_handler(signum: int, frame: object) -> None:
+    del signum, frame
+    sys.exit(0)
 
 
-class _ImpersonateProxyModule(types.ModuleType):
-    """Custom module class mapping module-level attributes to _GLOBAL_CONTEXT."""
+def _impersonate_error_message(target: str) -> str | None:
+    """Return an actionable error message when target is not a valid curl_cffi target, else None.
 
-    @property
-    def _DEBUG(self) -> bool:
-        return _GLOBAL_CONTEXT.config.debug
+    curl_cffi only raises ImpersonateError lazily on the first request, so an
+    invalid target would otherwise turn every request into a 502 with no hint
+    about the cause.
+    """
+    from typing import get_args
 
-    @_DEBUG.setter
-    def _DEBUG(self, val: bool) -> None:
-        _GLOBAL_CONTEXT.config.debug = val
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
 
-    @property
-    def _QUIET(self) -> bool:
-        return _GLOBAL_CONTEXT.config.quiet
-
-    @_QUIET.setter
-    def _QUIET(self, val: bool) -> None:
-        _GLOBAL_CONTEXT.config.quiet = val
-
-    @property
-    def _IMPERSONATE(self) -> str:
-        return _GLOBAL_CONTEXT.config.impersonate
-
-    @_IMPERSONATE.setter
-    def _IMPERSONATE(self, val: str) -> None:
-        _GLOBAL_CONTEXT.config.impersonate = val
-
-    @property
-    def _HEADER_MODE(self) -> str:
-        return _GLOBAL_CONTEXT.config.header_mode
-
-    @_HEADER_MODE.setter
-    def _HEADER_MODE(self, val: str) -> None:
-        _GLOBAL_CONTEXT.config.header_mode = val
-
-    @property
-    def _FINGERPRINT_REAL(self) -> bool:
-        return _GLOBAL_CONTEXT.config.fingerprint_real
-
-    @_FINGERPRINT_REAL.setter
-    def _FINGERPRINT_REAL(self, val: bool) -> None:
-        _GLOBAL_CONTEXT.config.fingerprint_real = val
-
-    @property
-    def _STRIP_CLIENT_LEAK_HEADERS(self) -> bool:
-        return _GLOBAL_CONTEXT.config.strip_client_leak_headers
-
-    @_STRIP_CLIENT_LEAK_HEADERS.setter
-    def _STRIP_CLIENT_LEAK_HEADERS(self, val: bool) -> None:
-        _GLOBAL_CONTEXT.config.strip_client_leak_headers = val
-
-    @property
-    def _HOST_CERT_MAX(self) -> int:
-        return _GLOBAL_CONTEXT.host_cert_max
-
-    @_HOST_CERT_MAX.setter
-    def _HOST_CERT_MAX(self, val: int) -> None:
-        _GLOBAL_CONTEXT.host_cert_max = val
-
-    @property
-    def _SESSION_POOL_MAX(self) -> int:
-        return _GLOBAL_CONTEXT.session_pool_max
-
-    @_SESSION_POOL_MAX.setter
-    def _SESSION_POOL_MAX(self, val: int) -> None:
-        _GLOBAL_CONTEXT.session_pool_max = val
-
-    @property
-    def _SESSION_POOL(self):
-        return _GLOBAL_CONTEXT.session_pool
-
-    @property
-    def _CA_KEY(self):
-        return _GLOBAL_CONTEXT.ca_key
-
-    @_CA_KEY.setter
-    def _CA_KEY(self, val) -> None:
-        _GLOBAL_CONTEXT.ca_key = val
-
-    @property
-    def _CA_CERT(self):
-        return _GLOBAL_CONTEXT.ca_cert
-
-    @_CA_CERT.setter
-    def _CA_CERT(self, val) -> None:
-        _GLOBAL_CONTEXT.ca_cert = val
-
-    @property
-    def _LEAF_KEY(self):
-        return _GLOBAL_CONTEXT.leaf_key
-
-    @_LEAF_KEY.setter
-    def _LEAF_KEY(self, val) -> None:
-        _GLOBAL_CONTEXT.leaf_key = val
-
-
-# Functions maintaining backward-compatibility signature
-def _show_identifying(val: str) -> str:
-    return _GLOBAL_CONTEXT.show_identifying(val)
-
-
-def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
-    return sanitize_headers(headers)
-
-
-def _get_client_netblock(ip_str: str) -> str:
-    return get_client_netblock(ip_str)
-
-
-def _init_ca(ca_dir: str | None = None) -> None:
-    init_ca(_GLOBAL_CONTEXT, ca_dir)
-
-
-def _get_cert_for_host(hostname: str):
-    return get_cert_for_host(_GLOBAL_CONTEXT, hostname)
-
-
-def _clear_session_pool() -> None:
-    _GLOBAL_CONTEXT.clear_session_pool()
-
-
-def _get_session():
-    return session_pool.get_session(_GLOBAL_CONTEXT)
-
-
-def _release_session(session, *, healthy: bool = True) -> None:
-    session_pool.release_session(_GLOBAL_CONTEXT, session, healthy=healthy)
-
-
-def _cffi_defaults_headers(headers: dict[str, str]) -> dict[str, str]:
-    return cffi_defaults_headers(headers)
-
-
-def _strip_leak_headers(headers: dict[str, str]) -> dict[str, str]:
-    return strip_leak_headers(headers)
-
-
-def _fingerprint_for(target: str):
-    from impersonate_proxy.fingerprint import fingerprint_for
-
-    return fingerprint_for(target)
-
-
-def _do_request(method: str, url: str, headers: dict[str, str], body: bytes | None, allow_redirects: bool = False):
-    return session_pool.do_request(_GLOBAL_CONTEXT, method, url, headers, body, allow_redirects=allow_redirects)
-
-
-def _raw_tunnel(client_sock, host: str, port: int) -> None:
-    raw_tunnel(_GLOBAL_CONTEXT, client_sock, host, port)
-
-
-class ProxyHandler(ProxyRequestHandler):
-    """Backward-compatible ProxyHandler bound to _GLOBAL_CONTEXT."""
-
-    ctx = _GLOBAL_CONTEXT
+    targets: tuple[str, ...] = get_args(BrowserTypeLiteral)
+    if target in targets:
+        return None
+    by_family: dict[str, list[str]] = {}
+    for t in targets:
+        by_family.setdefault(t.rstrip("0123456789"), []).append(t)
+    listing = "\n".join(f"  {family}: {', '.join(sorted(names))}" for family, names in sorted(by_family.items()))
+    return f"--impersonate {target!r} is not a valid curl_cffi target. Valid targets:\n{listing}"
 
 
 def run(
@@ -236,7 +85,8 @@ def run(
     stats_port: int | None = None,
     ctx: ProxyContext | None = None,
 ) -> None:
-    target_ctx = ctx or _GLOBAL_CONTEXT
+    """Run the proxy server with the given configuration until interrupted."""
+    target_ctx = ctx or ProxyContext()
     target_ctx.config = ProxyConfig(
         host=host,
         port=port,
@@ -258,14 +108,6 @@ def run(
         allow_from=allow_from,
     )
     target_ctx.session_pool_max = session_pool_max
-
-    logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=True,  # Overwrites default pytest handler config in tests
-    )
 
     cert_manager.init_ca(target_ctx, ca_dir)
 
@@ -300,29 +142,8 @@ def run(
         target_ctx.clear_session_pool()
 
 
-def _impersonate_error_message(target: str) -> str | None:
-    """Return an actionable error message when target is not a valid curl_cffi target, else None.
-
-    curl_cffi only raises ImpersonateError lazily on the first request, so an
-    invalid target would otherwise turn every request into a 502 with no hint
-    about the cause.
-    """
-    from typing import get_args
-
-    from curl_cffi.requests.impersonate import BrowserTypeLiteral
-
-    targets: tuple[str, ...] = get_args(BrowserTypeLiteral)
-    if target in targets:
-        return None
-    by_family: dict[str, list[str]] = {}
-    for t in targets:
-        by_family.setdefault(t.rstrip("0123456789"), []).append(t)
-    listing = "\n".join(f"  {family}: {', '.join(sorted(names))}" for family, names in sorted(by_family.items()))
-    return f"--impersonate {target!r} is not a valid curl_cffi target. Valid targets:\n{listing}"
-
-
 def main() -> None:
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGTERM, _sigterm_handler)
     parser = argparse.ArgumentParser(description="HTTP/HTTPS proxy that impersonates browser TLS fingerprints")
     parser.add_argument(
         "--port",
@@ -474,6 +295,13 @@ def main() -> None:
         parser.error(error_message)
     block_hosts = tuple(h.strip().lower() for h in args.block_host.split(",") if h.strip())
     allow_from = tuple(e.strip() for e in args.allow_from.split(",") if e.strip())
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
+    )
     run(
         host=args.host,
         port=args.port,
@@ -496,9 +324,6 @@ def main() -> None:
         stats_port=args.stats_port,
     )
 
-
-# Apply custom module class to intercept module-level property access/mutation
-sys.modules[__name__].__class__ = _ImpersonateProxyModule
 
 if __name__ == "__main__":
     main()

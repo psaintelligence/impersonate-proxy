@@ -2,16 +2,13 @@ import concurrent.futures
 import tempfile
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from socketserver import ThreadingMixIn
+from http.server import BaseHTTPRequestHandler
 
 import requests
 
-from impersonate_proxy import main as proxy
-
-
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
+from impersonate_proxy.cert_manager import init_ca
+from impersonate_proxy.context import ProxyConfig, ProxyContext
+from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -41,8 +38,9 @@ def run_benchmark():
     proxy_port = 38899
     proxy_url = f"http://127.0.0.1:{proxy_port}"
     with tempfile.TemporaryDirectory() as tmpdir:
-        proxy._init_ca(tmpdir)
-        proxy_server = ThreadingHTTPServer(("127.0.0.1", proxy_port), proxy.ProxyHandler)
+        ctx = ProxyContext(ProxyConfig(ca_dir=tmpdir))
+        init_ca(ctx, tmpdir)
+        proxy_server = ThreadingHTTPServer(("127.0.0.1", proxy_port), create_handler_class(ctx), ctx)
         proxy_thread = threading.Thread(target=proxy_server.serve_forever, daemon=True)
         proxy_thread.start()
 

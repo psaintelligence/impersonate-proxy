@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from impersonate_proxy import main as proxy
+from impersonate_proxy.header_filter import cffi_defaults_headers, strip_leak_headers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -75,7 +75,7 @@ class TestCffiDefaultsMode:
     drops bot-tell headers, and preserves request-specific + shape-dependent headers."""
 
     def test_strips_browser_shape_headers(self, client_headers_non_browser_like):
-        out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+        out = cffi_defaults_headers(client_headers_non_browser_like)
         for h in [
             "User-Agent",
             "Accept-Encoding",
@@ -91,14 +91,14 @@ class TestCffiDefaultsMode:
             assert h.lower() not in {k.lower() for k in out}, f"{h} (any case) should be stripped"
 
     def test_drops_bot_tell_headers(self, client_headers_non_browser_like):
-        out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+        out = cffi_defaults_headers(client_headers_non_browser_like)
         for h in ["Cache-Control", "DNT", "Connection"]:
             assert h not in out, f"{h} should be dropped as a bot tell"
             assert h.lower() not in {k.lower() for k in out}
 
     def test_drops_connection_with_warning(self, client_headers_non_browser_like, caplog):
         with caplog.at_level(logging.WARNING):
-            out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+            out = cffi_defaults_headers(client_headers_non_browser_like)
         assert "Connection" not in out
         assert "connection" not in {k.lower() for k in out}
         assert any("Connection" in rec.getMessage() for rec in caplog.records), (
@@ -106,7 +106,7 @@ class TestCffiDefaultsMode:
         )
 
     def test_preserves_request_specific_headers(self, client_headers_with_proxy_leak):
-        out = proxy._cffi_defaults_headers(client_headers_with_proxy_leak)
+        out = cffi_defaults_headers(client_headers_with_proxy_leak)
         assert out["Host"] == "example.com"
         assert out["Authorization"] == "Bearer my-token"
         assert out["Cookie"] == "session=abc"
@@ -127,14 +127,14 @@ class TestCffiDefaultsMode:
             "If-None-Match": '"v1"',
             "Range": "bytes=0-1023",
         }
-        out = proxy._cffi_defaults_headers(headers)
+        out = cffi_defaults_headers(headers)
         for k, v in headers.items():
             if k == "User-Agent":
                 continue  # stripped
             assert out[k] == v, f"{k} should be preserved"
 
     def test_preserves_client_sec_fetch_headers(self, client_headers_non_browser_like):
-        out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+        out = cffi_defaults_headers(client_headers_non_browser_like)
         # Non-browser XHR fixture sends Sec-Fetch-Mode: cors — must be preserved so the
         # request keeps its XHR shape; curl_cffi cannot infer it.
         assert out["Sec-Fetch-Mode"] == "cors"
@@ -142,13 +142,13 @@ class TestCffiDefaultsMode:
         headers = dict(client_headers_non_browser_like)
         headers["Sec-Fetch-Dest"] = "empty"
         headers["Sec-Fetch-Site"] = "same-origin"
-        out = proxy._cffi_defaults_headers(headers)
+        out = cffi_defaults_headers(headers)
         assert out["Sec-Fetch-Dest"] == "empty"
         assert out["Sec-Fetch-Site"] == "same-origin"
         assert out["Sec-Fetch-Mode"] == "cors"
 
     def test_preserves_client_accept(self, client_headers_non_browser_like):
-        out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+        out = cffi_defaults_headers(client_headers_non_browser_like)
         # Accept is shape-dependent (nav=text/html, XHR=*/* or application/json); the
         # client knows. Preserve it so we don't force curl_cffi's nav-style default
         # onto XHR requests.
@@ -160,12 +160,12 @@ class TestCffiDefaultsMode:
             "User-Agent": "curl/8.0",
             "Accept-Language": "*",
         }
-        out = proxy._cffi_defaults_headers(headers)
+        out = cffi_defaults_headers(headers)
         assert "Accept-Language" not in out
         assert "accept-language" not in {k.lower() for k in out}
 
     def test_preserves_real_accept_language(self, client_headers_non_browser_like):
-        out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+        out = cffi_defaults_headers(client_headers_non_browser_like)
         assert out["Accept-Language"] == "en-US,en;q=0.9"
 
     def test_preserves_custom_x_headers(self):
@@ -175,14 +175,14 @@ class TestCffiDefaultsMode:
             "X-API-Key": "sk-foo",
             "X-Custom-App-Header": "value",
         }
-        out = proxy._cffi_defaults_headers(headers)
+        out = cffi_defaults_headers(headers)
         assert out["X-API-Key"] == "sk-foo"
         assert out["X-Custom-App-Header"] == "value"
         # User-Agent is stripped (curl_cffi injects the profile UA)
         assert "User-Agent" not in out
 
     def test_returns_a_copy(self, client_headers_non_browser_like):
-        out = proxy._cffi_defaults_headers(client_headers_non_browser_like)
+        out = cffi_defaults_headers(client_headers_non_browser_like)
         assert out is not client_headers_non_browser_like
         # Mutating the output must not affect the input.
         out["X-Injected-By-Test"] = "1"
@@ -227,7 +227,7 @@ class TestStripClientLeakHeaders:
     )
     def test_each_leak_header_is_dropped(self, header_name):
         headers = {"Host": "example.com", header_name: "leak-value"}
-        out = proxy._strip_leak_headers(headers)
+        out = strip_leak_headers(headers)
         assert header_name not in out
         assert header_name.lower() not in {k.lower() for k in out}
 
@@ -246,7 +246,7 @@ class TestStripClientLeakHeaders:
         surfaced as a warning so the operator can diagnose the misconfig."""
         headers = {"Host": "example.com", header_name: "10.0.0.1"}
         with caplog.at_level(logging.WARNING):
-            out = proxy._strip_leak_headers(headers)
+            out = strip_leak_headers(headers)
         assert out[header_name] == "10.0.0.1", f"{header_name} should be forwarded, not stripped"
         # A warning should have been logged mentioning the header
         assert any(header_name in rec.getMessage() and "CDN-ingress" in rec.getMessage() for rec in caplog.records), (
@@ -254,7 +254,7 @@ class TestStripClientLeakHeaders:
         )
 
     def test_preserves_non_leak_headers(self, client_headers_with_proxy_leak):
-        out = proxy._strip_leak_headers(client_headers_with_proxy_leak)
+        out = strip_leak_headers(client_headers_with_proxy_leak)
         assert out["Host"] == "example.com"
         assert out["User-Agent"] != ""
         assert out["Authorization"] == "Bearer my-token"
@@ -270,7 +270,7 @@ class TestStripClientLeakHeaders:
             "X-Forwarded-Host": "internal",
             "VIA": "1.1 proxy",
         }
-        out = proxy._strip_leak_headers(headers)
+        out = strip_leak_headers(headers)
         assert "x-forwarded-for" not in out
         assert "X-Forwarded-Host" not in out
         assert "VIA" not in out
@@ -284,7 +284,7 @@ class TestStripClientLeakHeaders:
             "X-Custom-App-Header": "value",
             "X-Request-ID": "should-be-dropped",
         }
-        out = proxy._strip_leak_headers(headers)
+        out = strip_leak_headers(headers)
         assert out["X-API-Key"] == "sk-foo"
         assert out["X-Custom-App-Header"] == "value"
         assert "X-Request-ID" not in out
@@ -293,7 +293,7 @@ class TestStripClientLeakHeaders:
         """CDN-ingress detection is case-insensitive."""
         headers = {"Host": "example.com", "x-real-ip": "10.0.0.1"}
         with caplog.at_level(logging.WARNING):
-            out = proxy._strip_leak_headers(headers)
+            out = strip_leak_headers(headers)
         assert out["x-real-ip"] == "10.0.0.1"
         assert any("x-real-ip" in rec.getMessage() for rec in caplog.records)
 
@@ -305,8 +305,8 @@ class TestStripClientLeakHeaders:
 
 class TestCombinedCffiDefaultsAndStrip:
     def test_cffi_defaults_plus_strip(self, client_headers_with_proxy_leak):
-        prepared = proxy._cffi_defaults_headers(client_headers_with_proxy_leak)
-        out = proxy._strip_leak_headers(prepared)
+        prepared = cffi_defaults_headers(client_headers_with_proxy_leak)
+        out = strip_leak_headers(prepared)
         # cffi-defaults stripped User-Agent (curl_cffi injects it)
         assert "User-Agent" not in out
         # Strip removed middlebox-chain + tracing leak headers
@@ -332,7 +332,7 @@ class TestCombinedCffiDefaultsAndStrip:
     def test_passthrough_plus_strip_only_drops_leak(self, client_headers_with_proxy_leak):
         # Passthrough branch: dict(headers) then _strip_leak_headers.
         prepared = dict(client_headers_with_proxy_leak)
-        out = proxy._strip_leak_headers(prepared)
+        out = strip_leak_headers(prepared)
         # Passthrough: no browser headers injected, client UA preserved
         assert "Chrome/120" in out["User-Agent"]
         # Strip still removes leak signals

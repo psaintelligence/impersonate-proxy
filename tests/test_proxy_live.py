@@ -4,12 +4,13 @@ import socket
 import tempfile
 import threading
 import time
-from http.server import HTTPServer
 
 import pytest
 import requests
 
-from impersonate_proxy import main as impersonate_proxy
+from impersonate_proxy.cert_manager import init_ca
+from impersonate_proxy.context import ProxyConfig, ProxyContext
+from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
 
 def _get_free_port() -> int:
@@ -27,14 +28,10 @@ class TestProxyLive:
         port = _get_free_port()
         proxy_url = f"http://127.0.0.1:{port}"
 
-        from socketserver import ThreadingMixIn
-
-        class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
-
         with tempfile.TemporaryDirectory() as tmpdir:
-            impersonate_proxy._init_ca(tmpdir)
-            server = ThreadingHTTPServer(("127.0.0.1", port), impersonate_proxy.ProxyHandler)
+            ctx = ProxyContext(ProxyConfig(ca_dir=tmpdir))
+            init_ca(ctx, tmpdir)
+            server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
 
@@ -61,3 +58,4 @@ class TestProxyLive:
                 ) or "webm" in resp.headers.get("Content-Type", "")
             finally:
                 server.shutdown()
+                ctx.clear_session_pool()

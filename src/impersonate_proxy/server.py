@@ -9,13 +9,18 @@ import logging
 import select
 import socket
 import urllib.parse
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+from typing import IO, TYPE_CHECKING
 
 from impersonate_proxy.cert_manager import get_cert_for_host
 from impersonate_proxy.context import ProxyContext
 from impersonate_proxy.header_filter import sanitize_headers
 from impersonate_proxy.session_pool import do_request
+
+if TYPE_CHECKING:
+    from curl_cffi import requests as cffi_requests
 
 CHUNK_SIZE: int = 65536
 # Safety cap on requests served per CONNECT tunnel (not a browser-relevant limit;
@@ -121,6 +126,15 @@ def _wants_keep_alive(headers: dict[str, str], version: str) -> bool:
     return "keep-alive" in tokens
 
 
+def _iter_content_bytes(resp: "cffi_requests.Response") -> Iterator[bytes]:
+    """Return an upstream response's body as an iterator of byte chunks.
+
+    curl_cffi leaves ``iter_content``'s parameters and yielded type unannotated
+    upstream, so the iterator must be pinned at this single boundary.
+    """
+    return resp.iter_content()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+
 def get_client_netblock(ip_str: str) -> str:
     """Return the /24 netblock for IPv4 or /64 netblock for IPv6."""
     try:
@@ -169,7 +183,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
     ctx: ProxyContext
 
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
     def _reject_client(self, code: int, reason: str) -> None:
@@ -281,7 +295,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         self.close_connection = True
 
-    def _parse_mitm_request(self, rfile) -> tuple[str, str, str, dict[str, str], bytes | None] | None:
+    def _parse_mitm_request(self, rfile: IO[bytes]) -> tuple[str, str, str, dict[str, str], bytes | None] | None:
         """Read one request from the decrypted client stream.
 
         Returns ``(method, path, version, headers, body)`` or ``None`` when the
@@ -314,7 +328,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         body = self._read_mitm_body(rfile, headers)
         return method, path, version, headers, body
 
-    def _read_mitm_body(self, rfile, headers: dict[str, str]) -> bytes | None:
+    def _read_mitm_body(self, rfile: IO[bytes], headers: dict[str, str]) -> bytes | None:
         """Read the request body, honoring ``max_body_size`` (Content-Length or chunked)."""
         max_size = self.ctx.config.max_body_size
         if "chunked" in headers.get("Transfer-Encoding", "").lower():
@@ -359,13 +373,13 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             raise ConnectionError("client closed during body read")
         return body
 
-    def _write_mitm_error(self, wfile, code: int, reason: str) -> None:
+    def _write_mitm_error(self, wfile: IO[bytes], code: int, reason: str) -> None:
         """Write a minimal error response inside the decrypted tunnel (closes the tunnel)."""
         wfile.write(f"HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode())
         wfile.flush()
         self.ctx.stats.record_status(code)
 
-    def _write_chunked_response(self, wfile, resp, keep_alive: bool) -> None:
+    def _write_chunked_response(self, wfile: IO[bytes], resp: "cffi_requests.Response", keep_alive: bool) -> None:
         """Stream an upstream response to the client as a chunked HTTP/1.1 message."""
         skip_resp = {"transfer-encoding", "content-encoding", "content-length", "connection", "keep-alive"}
         status_code = resp.status_code
@@ -378,7 +392,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         wfile.write(b"Transfer-Encoding: chunked\r\n")
         wfile.write(b"Connection: keep-alive\r\n" if keep_alive else b"Connection: close\r\n")
         wfile.write(b"\r\n")
-        for chunk in resp.iter_content():
+        for chunk in _iter_content_bytes(resp):
             if chunk:
                 wfile.write(f"{len(chunk):x}\r\n".encode())
                 wfile.write(chunk)
@@ -392,7 +406,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         url: str,
         fwd_headers: dict[str, str],
         body: bytes | None,
-        wfile,
+        wfile: IO[bytes],
         keep_alive: bool,
     ) -> int | None:
         """Forward one decrypted request upstream and stream the response back.
@@ -499,7 +513,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Transfer-Encoding", "chunked")
                 self.send_header("Connection", "close")
                 self.end_headers()
-                for chunk in resp.iter_content():
+                for chunk in _iter_content_bytes(resp):
                     if chunk:
                         self.wfile.write(f"{len(chunk):x}\r\n".encode())
                         self.wfile.write(chunk)
@@ -529,16 +543,12 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, server_address, RequestHandlerClass, ctx: ProxyContext):
+    def __init__(self, server_address: tuple[str, int], RequestHandlerClass: type[BaseHTTPRequestHandler], ctx: ProxyContext):
         self.ctx = ctx
         super().__init__(server_address, RequestHandlerClass)
 
-    def finish_request(self, request, client_address):
-        """Instantiate RequestHandlerClass with ctx attached."""
-        self.RequestHandlerClass(request, client_address, self)
 
-
-def create_handler_class(ctx: ProxyContext):
+def create_handler_class(ctx: ProxyContext) -> type[ProxyRequestHandler]:
     """Return a ProxyRequestHandler subclass bound to the given ProxyContext."""
 
     class BoundProxyHandler(ProxyRequestHandler):
