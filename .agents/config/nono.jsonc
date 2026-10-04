@@ -1,0 +1,33 @@
+{
+  "extends": ["opencode"],
+  "meta": {
+    "name": "nono-project-impersonate-proxy",
+    "version": "1.1.0",
+    "description": "Overlay for impersonate-proxy"
+  },
+
+  "filesystem": {
+    "read": [
+      "$WORKDIR/..",
+      "$WORKDIR/.agents/config"
+    ],
+    "read_file": [
+      "$HOME/.ssh/config",
+      "$HOME/.ssh/known_hosts",
+      "/etc/mime.types"
+    ],
+    "allow": [
+      "$WORKDIR",
+      "$HOME/.local/venvs",
+      "/usr/libexec/docker/cli-plugins",
+      "$HOME/.local/share/pipx"
+    ],
+    "unix_socket": [
+      "$SSH_AUTH_SOCK",
+      "/run/docker.sock"
+    ]
+  },
+  "network": {
+    "open_port": [ 6380 ]
+  }
+}
