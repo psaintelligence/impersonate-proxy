@@ -87,4 +87,11 @@ markers = [
     "live: tests that hit real URLs (deselect with '-m \"not live\"')",
     "live_extended: extended fingerprint/bot-detection tests against known protected sites (run with 'pytest -m live_extended')",
 ]
+filterwarnings = [
+    # fingerprint-real deliberately overrides the HTTP/2 header order on top
+    # of an impersonation profile (extra_fp={"header_order": ...}), so this
+    # curl_cffi notice is expected on every such request; the runtime-level
+    # equivalent lives in session_pool.py (pytest resets the filter stack).
+    "ignore:Extra fingerprints were altered:curl_cffi.utils.CurlCffiWarning",
+]
 

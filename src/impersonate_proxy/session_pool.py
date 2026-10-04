@@ -3,9 +3,11 @@
 import contextlib
 import logging
 import queue
+import warnings
 from typing import Any
 
 from curl_cffi import requests as cffi_requests
+from curl_cffi.utils import CurlCffiWarning
 
 from impersonate_proxy.context import ProxyContext
 from impersonate_proxy.fingerprint import fingerprint_for
@@ -20,6 +22,19 @@ logger: logging.Logger = logging.getLogger("impersonate-proxy")
 # Safe methods retried once on a fresh session after transport-level failures:
 # no bytes reached the application layer, and repeated execution is harmless.
 _RETRYABLE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# fingerprint-real deliberately overrides the HTTP/2 header order on top of an
+# impersonation profile (extra_fp={"header_order": ...}), so curl_cffi's
+# "Extra fingerprints were altered after impersonated version was set" notice
+# is expected on every such request. curl_cffi ignores its own warnings at
+# runtime (config_warnings(on=False) in its __init__); this filter keeps that
+# suppression stable if that default ever changes or a -W override re-enables
+# them. Under pytest the filter stack is reset, so pyproject.toml carries the
+# equivalent filterwarnings entry. Registered once at import: filter state is
+# process-global, and per-call catch_warnings() blocks are not thread-safe.
+warnings.filterwarnings(
+    "ignore", category=CurlCffiWarning, message="Extra fingerprints were altered"
+)
 
 
 def get_session(ctx: ProxyContext) -> cffi_requests.Session[Any]:
