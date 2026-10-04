@@ -65,8 +65,11 @@ usage: impersonate-proxy [-h] [--port PORT] [--host HOST]
                          [--no-fingerprint-real]
                          [--session-pool-max SESSION_POOL_MAX]
                          [--connect-timeout CONNECT_TIMEOUT]
-                         [--read-timeout READ_TIMEOUT] [--ca-dir CA_DIR]
-                         [--debug] [--quiet]
+                         [--read-timeout READ_TIMEOUT]
+                         [--max-body-size MAX_BODY_SIZE]
+                         [--tunnel-idle-timeout TUNNEL_IDLE_TIMEOUT]
+                         [--block-host BLOCK_HOST] [--ca-dir CA_DIR] [--debug]
+                         [--quiet]
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints
 
@@ -112,6 +115,20 @@ options:
   --read-timeout READ_TIMEOUT
                         Upstream HTTP read timeout in seconds (default: 300.0
                         or IMPERSONATE_PROXY_READ_TIMEOUT)
+  --max-body-size MAX_BODY_SIZE
+                        Maximum client request body accepted per request, in
+                        bytes (default: 536870912 = 512 MiB or
+                        IMPERSONATE_PROXY_MAX_BODY_SIZE). Larger bodies are
+                        rejected with 413
+  --tunnel-idle-timeout TUNNEL_IDLE_TIMEOUT
+                        Idle seconds allowed on tunnel sockets before closing:
+                        the raw-tunnel select loop and the MITM keep-alive
+                        loop between requests (default: 30.0 or
+                        IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT)
+  --block-host BLOCK_HOST
+                        Comma-separated target hostnames to refuse with 403
+                        (exact or suffix match: example.com also blocks
+                        *.example.com). Or IMPERSONATE_PROXY_BLOCK_HOST
   --ca-dir, -c CA_DIR   Directory to store/load CA certificate and key
                         (default: ~/.config/impersonate-proxy or
                         IMPERSONATE_PROXY_CA_DIR)
@@ -125,8 +142,13 @@ The two header-mode flags are mutually exclusive. The default mode is
 `--cffi-defaults`. Equivalent environment variables are
 `IMPERSONATE_PROXY_HEADER_MODE` (one of `passthrough`, `cffi-defaults`),
 `IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS`, `IMPERSONATE_PROXY_UPSTREAM_PROXY`,
-`IMPERSONATE_PROXY_SESSION_POOL_MAX`, `IMPERSONATE_PROXY_CONNECT_TIMEOUT`, and
-`IMPERSONATE_PROXY_READ_TIMEOUT`.
+`IMPERSONATE_PROXY_SESSION_POOL_MAX`, `IMPERSONATE_PROXY_CONNECT_TIMEOUT`,
+`IMPERSONATE_PROXY_READ_TIMEOUT`, `IMPERSONATE_PROXY_MAX_BODY_SIZE`,
+`IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`, and `IMPERSONATE_PROXY_BLOCK_HOST`.
+
+An unknown `--impersonate` target is rejected at startup (exit code 2) with a
+list of valid `curl_cffi` targets — it would otherwise fail lazily on the first
+request with a 502 and no actionable hint.
 
 ---
 

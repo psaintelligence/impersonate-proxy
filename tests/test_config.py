@@ -21,6 +21,9 @@ _DEFAULT_RUN_CALL: dict[str, object] = {
     "connect_timeout": 10.0,
     "read_timeout": 300.0,
     "fingerprint_real": True,
+    "max_body_size": 512 * 1024 * 1024,
+    "tunnel_idle_timeout": 30.0,
+    "block_hosts": (),
 }
 
 
@@ -66,6 +69,9 @@ def test_config_env_vars():
             connect_timeout=10.0,
             read_timeout=300.0,
             fingerprint_real=True,
+            max_body_size=512 * 1024 * 1024,
+            tunnel_idle_timeout=30.0,
+            block_hosts=(),
         )
 
 
@@ -105,6 +111,9 @@ def test_config_cli_args():
             connect_timeout=10.0,
             read_timeout=300.0,
             fingerprint_real=True,
+            max_body_size=512 * 1024 * 1024,
+            tunnel_idle_timeout=30.0,
+            block_hosts=(),
         )
 
 
@@ -153,6 +162,9 @@ def test_config_cli_overrides_env():
             connect_timeout=10.0,
             read_timeout=300.0,
             fingerprint_real=True,
+            max_body_size=512 * 1024 * 1024,
+            tunnel_idle_timeout=30.0,
+            block_hosts=(),
         )
 
 
@@ -376,6 +388,77 @@ def test_config_new_features_env():
         assert kwargs["session_pool_max"] == 128
         assert kwargs["connect_timeout"] == 2.5
         assert kwargs["read_timeout"] == 60.0
+
+
+def test_config_new_hardening_flags_cli():
+    """Test parsing of max-body-size, tunnel-idle-timeout, and block-host CLI arguments."""
+    argv = [
+        "impersonate-proxy",
+        "--max-body-size",
+        "1024",
+        "--tunnel-idle-timeout",
+        "5.5",
+        "--block-host",
+        "evil.com, ads.example.net",
+    ]
+    with (
+        patch("sys.argv", argv),
+        patch.dict(os.environ, {}, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["max_body_size"] == 1024
+        assert kwargs["tunnel_idle_timeout"] == 5.5
+        assert kwargs["block_hosts"] == ("evil.com", "ads.example.net")
+
+
+def test_config_new_hardening_flags_env():
+    """Test parsing of max-body-size, tunnel-idle-timeout, and block-host environment variables."""
+    env = {
+        "IMPERSONATE_PROXY_MAX_BODY_SIZE": "2048",
+        "IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT": "12.5",
+        "IMPERSONATE_PROXY_BLOCK_HOST": "evil.com",
+    }
+    with (
+        patch("sys.argv", ["impersonate-proxy"]),
+        patch.dict(os.environ, env, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["max_body_size"] == 2048
+        assert kwargs["tunnel_idle_timeout"] == 12.5
+        assert kwargs["block_hosts"] == ("evil.com",)
+
+
+def test_config_invalid_impersonate_target():
+    """An unknown --impersonate target must fail fast at startup with exit code 2."""
+    argv = ["impersonate-proxy", "--impersonate", "bogus"]
+    with (
+        patch("sys.argv", argv),
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(SystemExit) as exc,
+    ):
+        impersonate_proxy.main()
+    assert exc.value.code == 2
+
+
+def test_config_invalid_impersonate_target_lists_alternatives(capsys):
+    """The error message must list the valid curl_cffi targets."""
+    argv = ["impersonate-proxy", "--impersonate", "bogus"]
+    with (
+        patch("sys.argv", argv),
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(SystemExit),
+    ):
+        impersonate_proxy.main()
+    err = capsys.readouterr().err
+    assert "bogus" in err
+    assert "chrome" in err
+    assert "firefox" in err
 
 
 @pytest.mark.parametrize(

@@ -33,6 +33,14 @@ class ProxyConfig:
     session_pool_max: int = 32
     connect_timeout: float = 10.0
     read_timeout: float = 300.0
+    # Maximum client request body accepted per request (Content-Length or
+    # de-chunked chunked body). Larger bodies are rejected with 413.
+    max_body_size: int = 512 * 1024 * 1024
+    # Idle seconds allowed on tunnel sockets before they are closed: both the
+    # raw-tunnel select loop and the MITM keep-alive read loop between requests.
+    tunnel_idle_timeout: float = 30.0
+    # Target hostnames to refuse (exact or suffix match). Empty allows all.
+    block_hosts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.header_mode not in ("passthrough", "cffi-defaults"):

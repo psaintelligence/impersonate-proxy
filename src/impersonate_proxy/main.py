@@ -228,6 +228,9 @@ def run(
     connect_timeout: float = 10.0,
     read_timeout: float = 300.0,
     fingerprint_real: bool = True,
+    max_body_size: int = 512 * 1024 * 1024,
+    tunnel_idle_timeout: float = 30.0,
+    block_hosts: tuple[str, ...] = (),
     ctx: ProxyContext | None = None,
 ) -> None:
     target_ctx = ctx or _GLOBAL_CONTEXT
@@ -245,6 +248,9 @@ def run(
         connect_timeout=connect_timeout,
         read_timeout=read_timeout,
         fingerprint_real=fingerprint_real,
+        max_body_size=max_body_size,
+        tunnel_idle_timeout=tunnel_idle_timeout,
+        block_hosts=block_hosts,
     )
     target_ctx.session_pool_max = session_pool_max
 
@@ -279,6 +285,27 @@ def run(
         logger.info("Shutting down proxy server and clearing session pool...")
         server.server_close()
         target_ctx.clear_session_pool()
+
+
+def _impersonate_error_message(target: str) -> str | None:
+    """Return an actionable error message when target is not a valid curl_cffi target, else None.
+
+    curl_cffi only raises ImpersonateError lazily on the first request, so an
+    invalid target would otherwise turn every request into a 502 with no hint
+    about the cause.
+    """
+    from typing import get_args
+
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
+
+    targets: tuple[str, ...] = get_args(BrowserTypeLiteral)
+    if target in targets:
+        return None
+    by_family: dict[str, list[str]] = {}
+    for t in targets:
+        by_family.setdefault(t.rstrip("0123456789"), []).append(t)
+    listing = "\n".join(f"  {family}: {', '.join(sorted(names))}" for family, names in sorted(by_family.items()))
+    return f"--impersonate {target!r} is not a valid curl_cffi target. Valid targets:\n{listing}"
 
 
 def main() -> None:
@@ -365,6 +392,28 @@ def main() -> None:
         help="Upstream HTTP read timeout in seconds (default: 300.0 or IMPERSONATE_PROXY_READ_TIMEOUT)",
     )
     parser.add_argument(
+        "--max-body-size",
+        type=int,
+        default=int(os.environ.get("IMPERSONATE_PROXY_MAX_BODY_SIZE", str(512 * 1024 * 1024))),
+        help="Maximum client request body accepted per request, in bytes "
+        "(default: 536870912 = 512 MiB or IMPERSONATE_PROXY_MAX_BODY_SIZE). "
+        "Larger bodies are rejected with 413",
+    )
+    parser.add_argument(
+        "--tunnel-idle-timeout",
+        type=float,
+        default=float(os.environ.get("IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT", "30.0")),
+        help="Idle seconds allowed on tunnel sockets before closing: the raw-tunnel "
+        "select loop and the MITM keep-alive loop between requests "
+        "(default: 30.0 or IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT)",
+    )
+    parser.add_argument(
+        "--block-host",
+        default=os.environ.get("IMPERSONATE_PROXY_BLOCK_HOST", ""),
+        help="Comma-separated target hostnames to refuse with 403 (exact or suffix "
+        "match: example.com also blocks *.example.com). Or IMPERSONATE_PROXY_BLOCK_HOST",
+    )
+    parser.add_argument(
         "--ca-dir",
         "-c",
         default=os.environ.get("IMPERSONATE_PROXY_CA_DIR"),
@@ -386,6 +435,10 @@ def main() -> None:
     )
     args = parser.parse_args()
     header_mode = args.header_mode if args.header_mode in ("passthrough", "cffi-defaults") else "cffi-defaults"
+    error_message = _impersonate_error_message(args.impersonate)
+    if error_message:
+        parser.error(error_message)
+    block_hosts = tuple(h.strip().lower() for h in args.block_host.split(",") if h.strip())
     run(
         host=args.host,
         port=args.port,
@@ -400,6 +453,9 @@ def main() -> None:
         connect_timeout=args.connect_timeout,
         read_timeout=args.read_timeout,
         fingerprint_real=args.fingerprint_real,
+        max_body_size=args.max_body_size,
+        tunnel_idle_timeout=args.tunnel_idle_timeout,
+        block_hosts=block_hosts,
     )
 
 

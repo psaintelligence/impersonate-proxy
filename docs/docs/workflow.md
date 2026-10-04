@@ -26,13 +26,15 @@ sequenceDiagram
         Proxy-->>Client: HTTP/1.1 200 Connection Established
         Proxy->>Proxy: Generate or lookup dynamic Leaf Cert
         Proxy->>Client: Perform local TLS Handshake (MITM)
-        Client->>Proxy: Encrypted HTTP request
-        Proxy->>Proxy: Lease session from Pool
-        Proxy->>Proxy: Adapt headers (Strip non-browser client overrides)
-        Proxy->>Target: Issue request (via curl_cffi with TLS Impersonation)
-        Target-->>Proxy: Response
-        Proxy-->>Client: Stream response chunk-by-chunk
-        Proxy->>Proxy: Return session to Pool
+        loop Keep-alive tunnel (until client closes or idle timeout)
+            Client->>Proxy: Encrypted HTTP request
+            Proxy->>Proxy: Lease session from Pool
+            Proxy->>Proxy: Adapt headers (Strip non-browser client overrides)
+            Proxy->>Target: Issue request (via curl_cffi with TLS Impersonation)
+            Target-->>Proxy: Response
+            Proxy-->>Client: Stream response chunk-by-chunk
+            Proxy->>Proxy: Return session to Pool
+        end
     end
 ```
 
@@ -57,6 +59,23 @@ Under load (such as bursts of ~100 concurrent requests), initiating new `curl_cf
 - **Global Session Pool**: The proxy manages a queue-based `_SESSION_POOL` containing reusable `curl_cffi` sessions (capped at 32).
 - **Upstream Keep-Alive**: Reusing sessions maintains active TCP connections to target hosts. Subsequent requests to the same target domain completely bypass DNS resolving and TCP/TLS handshake steps.
 - **Resource Leasing**: When a request starts, a session is leased from the pool. The proxy wraps the response's `close()` method so that the session is automatically returned to the pool only when the response stream has been fully consumed or closed by the client.
+
+### Keep-alive CONNECT tunnels (client side)
+
+Inside a decrypted CONNECT tunnel, the proxy honors client-driven keep-alive: after each response it loops to read the next request on the **same TLS session** instead of tearing the tunnel down, so browsers pay one TLS handshake per tunnel rather than one per request.
+
+- **Client-driven persistence**: HTTP/1.1 requests keep the tunnel open unless the client sends `Connection: close`; HTTP/1.0 requests require an explicit `Connection`/`Proxy-Connection: keep-alive` token. The response mirrors the decision (`Connection: keep-alive` or `Connection: close`).
+- **Idle cap**: a tunnel is dropped when the next request does not arrive within `--tunnel-idle-timeout` seconds (default 30.0, env `IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`). The same knob bounds the raw-tunnel select loop.
+- **Iteration cap**: a hard cap (1000 requests) per tunnel guards against pathological clients.
+- **Error handling inside the tunnel**: an oversized request body (see below) is answered with `413`, malformed framing with `400`, and both end the tunnel; an upstream failure is answered with `502` and also ends the tunnel.
+
+### Request body limit
+
+The proxy caps the client request body it will buffer, per request: `--max-body-size` bytes (default 536870912 = 512 MiB, env `IMPERSONATE_PROXY_MAX_BODY_SIZE`). This applies to both `Content-Length` bodies and de-chunked `Transfer-Encoding: chunked` bodies on both the plain-HTTP and MITM paths. Requests exceeding the cap are rejected with `413 Payload Too Large` without buffering the body, and invalid/negative `Content-Length` values are rejected with `400`.
+
+### Target host deny list
+
+`--block-host example.com,ads.example.net` (env `IMPERSONATE_PROXY_BLOCK_HOST`) refuses requests to listed hostnames with `403 Forbidden` — before any tunnel is established (CONNECT) or upstream request is issued (plain HTTP). Matching is case-insensitive and suffix-aware: an entry `example.com` blocks `example.com` itself and every `*.example.com` subdomain, but not `notexample.com`.
 
 ---
 

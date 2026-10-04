@@ -45,6 +45,13 @@ The proxy operates in two primary modes depending on whether it receives plain H
    - The server uses `ThreadingMixIn` combined with `HTTPServer` to handle multiple client connections concurrently.
    - Certificate caching is synchronized with threading locks to optimize TLS handshake speed for repeated hosts.
 
+6. **Tunnel hardening (keep-alive + limits)**:
+   - CONNECT tunnels are client-driven keep-alive: HTTP/1.1 persists unless `Connection: close`; HTTP/1.0 requires an explicit keep-alive token. Capped by `--tunnel-idle-timeout` (default 30s, shared with the raw-tunnel select loop) and a hard per-tunnel request cap (1000).
+   - Request bodies are capped by `--max-body-size` (default 512 MiB); oversized → 413 inside the tunnel or on the plain-HTTP path, invalid/negative Content-Length → 400. Applies to Content-Length and de-chunked chunked bodies.
+   - `--block-host a.com,b.com` (exact or suffix match) refuses CONNECT/plain-HTTP targets with 403 before any tunnel or upstream request.
+   - Unknown `--impersonate` targets are rejected at startup (exit 2) via `_impersonate_error_message()` in `main.py`.
+   - Hop-by-hop header stripping is a single shared `_HOP_BY_HOP_HEADERS` frozenset in `server.py` used by both the MITM and plain-HTTP paths.
+
 ---
 
 ## 🧪 Testing Guidelines

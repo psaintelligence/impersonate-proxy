@@ -45,19 +45,14 @@ def do_request(
     """Issue a request via curl_cffi with TLS impersonation using ProxyContext."""
     session = get_session(ctx)
     try:
+        fp = fingerprint_for(ctx.config.impersonate) if ctx.config.fingerprint_real else None
         if ctx.config.header_mode == "passthrough":
             out_headers = dict(headers)
         else:
             out_headers = cffi_defaults_headers(headers)
-            if ctx.config.fingerprint_real:
-                fp = fingerprint_for(ctx.config.impersonate)
-                if fp is not None:
-                    out_headers.update(fp.to_headers())
-        extra_fp = None
-        if ctx.config.fingerprint_real:
-            fp = fingerprint_for(ctx.config.impersonate)
             if fp is not None:
-                extra_fp = {"header_order": fp.header_order}
+                out_headers.update(fp.to_headers())
+        extra_fp = {"header_order": fp.header_order} if fp is not None else None
         if ctx.config.strip_client_leak_headers:
             out_headers = strip_leak_headers(out_headers)
         logger.debug(

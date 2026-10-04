@@ -168,6 +168,34 @@ class TestProxyHTTP:
         resp = requests.get("http://127.0.0.1:1/unreachable", proxies={"http": proxy_server})
         assert resp.status_code == 502
 
+    def test_proxy_oversized_content_length_413(self, proxy_server):
+        """A Content-Length beyond max_body_size must be rejected with 413, never buffered."""
+        host, port = proxy_server.split("//")[1].split(":")
+        s = socket.create_connection((host, int(port)), timeout=10)
+        try:
+            s.sendall(
+                b"POST http://blocked-upstream.test/upload HTTP/1.1\r\n"
+                b"Host: blocked-upstream.test\r\nContent-Length: 999999999999\r\n\r\n"
+            )
+            resp = s.recv(4096)
+        finally:
+            s.close()
+        assert b"413" in resp.split(b" ", 3)[1]
+
+    def test_proxy_invalid_content_length_400(self, proxy_server):
+        """A non-integer Content-Length must be rejected with 400."""
+        host, port = proxy_server.split("//")[1].split(":")
+        s = socket.create_connection((host, int(port)), timeout=10)
+        try:
+            s.sendall(
+                b"POST http://blocked-upstream.test/upload HTTP/1.1\r\n"
+                b"Host: blocked-upstream.test\r\nContent-Length: abc\r\n\r\n"
+            )
+            resp = s.recv(4096)
+        finally:
+            s.close()
+        assert b"400" in resp.split(b" ", 3)[1]
+
     def test_proxy_redirect_passthrough(self, proxy_server, upstream_server):
         """Proxy should forward 302 without following it."""
         resp = requests.get(
