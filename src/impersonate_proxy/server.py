@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import IO, TYPE_CHECKING, Any
 
+from curl_cffi import CurlError
+
 from impersonate_proxy.cert_manager import get_cert_for_host
 from impersonate_proxy.context import ProxyContext
 from impersonate_proxy.header_filter import sanitize_headers
@@ -279,7 +281,12 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             err_msg = str(e)
-            if isinstance(e, (TimeoutError, BrokenPipeError, ConnectionResetError)) or "curl: (23)" in err_msg:
+            # curl 56/18 mid-stream = the upstream reset or closed the transfer
+            # after response headers were already forwarded; unreplayable here.
+            # Log as a clear warning rather than a handler-crash error.
+            if isinstance(e, CurlError) and e.code in (56, 18):
+                logger.warning(f"MITM upstream reset mid-response: {e}")
+            elif isinstance(e, (TimeoutError, BrokenPipeError, ConnectionResetError)) or "curl: (23)" in err_msg:
                 logger.debug(f"MITM tunnel closed: {e}")
             else:
                 logger.error(f"MITM handler error: {e}")
@@ -549,7 +556,9 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, server_address: tuple[str, int], RequestHandlerClass: type[BaseHTTPRequestHandler], ctx: ProxyContext):
+    def __init__(
+        self, server_address: tuple[str, int], RequestHandlerClass: type[BaseHTTPRequestHandler], ctx: ProxyContext
+    ):
         self.ctx = ctx
         self._thread_slots: threading.BoundedSemaphore | None = (
             threading.BoundedSemaphore(ctx.config.max_threads) if ctx.config.max_threads > 0 else None

@@ -96,8 +96,22 @@ order that fingerprint services inspect.
 
 ### 3. Manual TLS fingerprint (browserleaks)
 
-To verify the low-level TLS/HTTP2 fingerprint (JA3/JA4/Akamai) matches a real
-Chrome — header-order and TLS details that the whoami service does not show:
+The extended live suite (`pytest -m live_extended`) now automates the
+TLS-layer checks against two independent observers, so the manual snippet
+below is only needed for ad-hoc inspection during an upgrade:
+
+- `tests/.../test_tls_api_ja3_check` — tls.peet.ws: JA3 not in the known-bot
+  set, JA4 format `t13d<4 digits>h2_<hash>_<hash>`, non-empty HTTP/2 Akamai
+  fingerprint hash.
+- `tests/.../test_tls_browserleaks_fingerprint` — tls.browserleaks.com/json:
+  same JA4 format, non-empty `ja3n_hash`/`akamai_hash`, Akamai settings text
+  shaped `1:65536;...|<fp>|0|m,a,s,p`, and the reflected UA is the curated
+  profile UA (`_assert_profile_user_agent`).
+- `tests/.../test_cloudflare_trace_coherence` — cloudflare.com/cdn-cgi/trace:
+  reflected UA matches the curated profile UA, `http=http/2` (end-to-end
+  HTTP/2), `tls=TLSv1.3`.
+
+For ad-hoc manual inspection of the low-level TLS/HTTP2 fingerprint (JA3/JA4/Akamai):
 
 ```bash
 # Throwaway env; does NOT touch the project venv.
@@ -115,6 +129,22 @@ PY
 
 For the header-layer check via browserleaks, GET the same URL but assert the
 reflected `user_agent` and that the UA build is not `.0.0.0`.
+
+### Known live-endpoint instability
+
+`tls.peet.ws` intermittently resets the connection **mid-response** (after the
+response headers have been forwarded; observed as curl 56 on the proxy and
+`ChunkedEncodingError: Response ended prematurely` on the client). This is
+endpoint-side — verified NOT rate-based (fails at 2s spacing), not
+profile-specific across chrome/firefox, and never reproduced against
+`tls.browserleaks.com` with the identical proxied profile. Consequences:
+
+- Live tests route peet.ws requests through `_get_with_retry` (2 retries,
+  1s backoff) — keep that wrapper on any new peet.ws-based test.
+- The proxy logs these as `WARNING: MITM upstream reset mid-response`
+  (curl 56/18), not handler errors; they are unreplayable at the proxy layer.
+- Prefer `tls.browserleaks.com/json` as the stable fallback for TLS-layer
+  verification when peet.ws is flapping.
 
 ## After an upgrade, verify these specific regressions
 
@@ -181,4 +211,7 @@ Firefox targets (`firefox147`, alias `firefox`) are curated **UA-only**:
   verified through the proxy on `tls.peet.ws/api/all` (UA reflects the pinned
   Windows Firefox UA, no `sec-ch-ua` family present).
 - Verified coherent through the proxy against `whoami...`,
-  `tls.browserleaks.com/json`, and `tls.peet.ws/api/all`.
+  `tls.browserleaks.com/json`, `tls.peet.ws/api/all`, and
+  `cloudflare.com/cdn-cgi/trace` — the latter three automated in the
+  `live_extended` suite (JA4 format, Akamai HTTP/2 fingerprint, h2/TLS1.3
+  protocol coherence, curated-UA reflection).

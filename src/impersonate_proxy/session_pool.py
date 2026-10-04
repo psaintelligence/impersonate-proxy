@@ -32,9 +32,7 @@ _RETRYABLE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 # them. Under pytest the filter stack is reset, so pyproject.toml carries the
 # equivalent filterwarnings entry. Registered once at import: filter state is
 # process-global, and per-call catch_warnings() blocks are not thread-safe.
-warnings.filterwarnings(
-    "ignore", category=CurlCffiWarning, message="Extra fingerprints were altered"
-)
+warnings.filterwarnings("ignore", category=CurlCffiWarning, message="Extra fingerprints were altered")
 
 
 def get_session(ctx: ProxyContext) -> cffi_requests.Session[Any]:
@@ -73,11 +71,7 @@ def _issue_request(
         out_headers = cffi_defaults_headers(headers)
         if fp is not None:
             out_headers.update(fp.to_headers())
-    extra_fp = (
-        {"header_order": fp.header_order}
-        if fp is not None and fp.header_order
-        else None
-    )
+    extra_fp = {"header_order": fp.header_order} if fp is not None and fp.header_order else None
     if ctx.config.strip_client_leak_headers:
         out_headers = strip_leak_headers(out_headers)
     logger.debug(
@@ -86,9 +80,7 @@ def _issue_request(
         f"headers={sanitize_headers(out_headers)})"
     )
     proxies = (
-        {"http": ctx.config.upstream_proxy, "https": ctx.config.upstream_proxy}
-        if ctx.config.upstream_proxy
-        else None
+        {"http": ctx.config.upstream_proxy, "https": ctx.config.upstream_proxy} if ctx.config.upstream_proxy else None
     )
     timeout = (ctx.config.connect_timeout, ctx.config.read_timeout)
     # curl_cffi's stubs leave Session.request's return type unannotated; pin it

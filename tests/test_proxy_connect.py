@@ -208,10 +208,7 @@ class TestMaxBodySize:
         with patch("impersonate_proxy.server.do_request", fake_do_request):
             tls = _open_tunnel(proxy_url, "body.test", ca_dir)
             try:
-                tls.sendall(
-                    b"POST /upload HTTP/1.1\r\nHost: body.test\r\n"
-                    b"Content-Length: 11\r\n\r\nhello-world"
-                )
+                tls.sendall(b"POST /upload HTTP/1.1\r\nHost: body.test\r\nContent-Length: 11\r\n\r\nhello-world")
                 status, _ = _read_response(tls)
             finally:
                 tls.close()

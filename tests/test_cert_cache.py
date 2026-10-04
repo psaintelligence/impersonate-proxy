@@ -82,10 +82,7 @@ class TestInitCaConcurrency:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             contexts = [ProxyContext(ProxyConfig()) for _ in range(8)]
-            threads = [
-                threading.Thread(target=init_ca, args=(c, tmpdir))
-                for c in contexts
-            ]
+            threads = [threading.Thread(target=init_ca, args=(c, tmpdir)) for c in contexts]
             for t in threads:
                 t.start()
             for t in threads:

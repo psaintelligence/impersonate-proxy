@@ -267,8 +267,7 @@ def main() -> None:
         "--stats-port",
         type=int,
         default=os.environ.get("IMPERSONATE_PROXY_STATS_PORT"),
-        help="Serve Prometheus metrics at /metrics on this port (off by default, "
-        "or IMPERSONATE_PROXY_STATS_PORT)",
+        help="Serve Prometheus metrics at /metrics on this port (off by default, or IMPERSONATE_PROXY_STATS_PORT)",
     )
     parser.add_argument(
         "--max-threads",

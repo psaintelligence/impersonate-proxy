@@ -85,11 +85,7 @@ def init_ca(ctx: ProxyContext, ca_dir: str | None = None) -> None:
         cert_path = os.path.join(ca_dir, "ca.crt")
         claim_path = os.path.join(ca_dir, ".generate-claim")
 
-        if (
-            os.path.exists(key_path)
-            and os.path.exists(cert_path)
-            and _load_ca_files(ctx, key_path, cert_path)
-        ):
+        if os.path.exists(key_path) and os.path.exists(cert_path) and _load_ca_files(ctx, key_path, cert_path):
             logger.info(f"Loaded existing CA key and certificate from {ctx.show_identifying(ca_dir)}")
             return
         # Torn or mismatched pair on disk: fall through and regenerate.

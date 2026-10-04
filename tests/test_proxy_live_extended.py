@@ -5,6 +5,10 @@ These tests verify that tls-impersonate-proxy successfully bypasses browser
 fingerprint checks, JA3/JA4 detection, and commercial bot-protection systems
 by asserting HTTP 200 responses and comparing them against unproxied requests.
 
+Fingerprint-inspection tests assert against two independent observation
+endpoints (tls.peet.ws and tls.browserleaks.com), plus cloudflare.com's
+/cdn-cgi/trace for protocol/UA coherence.
+
 Both Chrome and Firefox TLS impersonation profiles are tested automatically via parameterization.
 
 Run with:
@@ -15,6 +19,7 @@ NOT run by default, NOT run in CI, NOT included in 'pytest -m live'.
 
 import contextlib
 import logging
+import re
 import socket
 import tempfile
 import threading
@@ -111,6 +116,7 @@ def _get(
     impersonate: str,
     timeout: int = 30,
     inject_leak_headers: bool = False,
+    headers: dict[str, str] | None = None,
 ) -> requests.Response:
     """
     Issue a GET request through the proxy using standard python-requests headers.
@@ -120,12 +126,13 @@ def _get(
     middlebox/identity-leak headers (XForwarded-*, Forwarded, Via, X-Request-ID, etc.)
     plus navigation-mismatch tells (Cache-Control, DNT, Connection). Used to verify
     that --cffi-defaults + --strip-client-leak-headers actually strip them.
+
+    ``headers`` (when given) takes precedence over ``inject_leak_headers``.
     """
     scheme = url.split("://")[0]
     proxies = {scheme: proxy_url}
 
-    headers = None
-    if inject_leak_headers:
+    if headers is None and inject_leak_headers:
         # Mimic a non-browser httpx-style outgoing request shape.
         headers = {
             "User-Agent": "python-httpx/0.27.0",
@@ -147,6 +154,51 @@ def _get(
     if scheme == "https":
         return requests.get(url, proxies=proxies, verify=ca_cert_path, headers=headers, timeout=timeout)
     return requests.get(url, proxies=proxies, headers=headers, timeout=timeout)
+
+
+# Some public fingerprint-inspection endpoints intermittently reset the
+# connection mid-response (observed on tls.peet.ws: the edge RSTs after the
+# response headers arrived, surfacing as ChunkedEncodingError on the client).
+# That failure is unreplayable at the proxy layer, so live tests retry the
+# client request instead of failing on upstream hiccups.
+_TRANSIENT_ERRORS = (
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+)
+
+
+def _get_with_retry(
+    url: str,
+    proxy_url: str,
+    ca_cert_path: str,
+    impersonate: str,
+    timeout: int = 30,
+    inject_leak_headers: bool = False,
+    headers: dict[str, str] | None = None,
+    retries: int = 2,
+    backoff: float = 1.0,
+) -> requests.Response:
+    """Issue _get() with bounded retries on transient transport errors."""
+    last_exc: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            return _get(
+                url,
+                proxy_url,
+                ca_cert_path,
+                impersonate,
+                timeout=timeout,
+                inject_leak_headers=inject_leak_headers,
+                headers=headers,
+            )
+        except _TRANSIENT_ERRORS as e:
+            last_exc = e
+            if attempt < retries:
+                logger.warning(f"[{url}] transient error ({type(e).__name__}); retry {attempt + 1}/{retries}")
+                time.sleep(backoff)
+    assert last_exc is not None
+    raise last_exc
 
 
 def _get_unproxied(url: str, use_chrome_headers: bool = False, timeout: int = 15) -> int:
@@ -179,6 +231,22 @@ def _get_unproxied(url: str, use_chrome_headers: bool = False, timeout: int = 15
         return resp.status_code
     except Exception:
         return 0
+
+
+def _assert_profile_user_agent(ua: str, impersonate: str) -> None:
+    """Assert the reflected UA is the impersonation profile's curated browser UA.
+
+    With fingerprint-real (default), Chrome targets carry a full-build
+    non-scrubbed Windows UA and Firefox targets the curated full-build
+    Windows Firefox UA (rv == Firefox/).
+    """
+    assert ua, "Expected non-empty reflected User-Agent"
+    assert "Windows NT 10.0" in ua, f"Expected Windows platform in UA, got {ua!r}"
+    if impersonate.startswith("firefox"):
+        assert "rv:147.0" in ua and "Firefox/147.0" in ua, f"Expected full-build Firefox/147 UA, got {ua!r}"
+    else:
+        assert "Chrome/150." in ua, f"Expected Chrome/150 UA, got {ua!r}"
+        assert "Chrome/150.0.0.0" not in ua, f"Scrubbed build in UA: {ua!r}"
 
 
 def _assert_status(
@@ -317,7 +385,8 @@ class TestFingerprintBypass:
         assert "google" in body, "Expected 'google' in response body"
 
     def test_tls_api_ja3_check(self, proxy_server: tuple[str, str, str, str, bool]) -> None:
-        """tls.peet.ws/api/all checks TLS handshake fingerprint (JA3, JA4)."""
+        """tls.peet.ws/api/all checks TLS handshake fingerprint (JA3, JA4) and
+        the HTTP/2 Akamai fingerprint."""
         known_bot_ja3 = {
             "62d3494f5d7c57c6d192a8a4af44c793",  # curl
             "b32309a26951912be7dba376398abc3b",  # python-requests
@@ -325,7 +394,7 @@ class TestFingerprintBypass:
         }
 
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
-        resp = _get(
+        resp = _get_with_retry(
             "https://tls.peet.ws/api/all",
             proxy_url,
             ca_cert_path,
@@ -340,7 +409,14 @@ class TestFingerprintBypass:
         assert ja3 not in known_bot_ja3, (
             f"JA3 {ja3!r} matches a known non-browser fingerprint — impersonation may not be working"
         )
-        logger.info(f"[tls.peet.ws] Dynamic JA3 fingerprint verified ({impersonate}/{header_mode}): {ja3}")
+        # JA4 must show a TLS 1.3 browser handshake negotiated over HTTP/2
+        # (curl_cffi upstream); format: t13d<ciphers><exts>h2_<hash>_<hash>.
+        ja4 = data.get("tls", {}).get("ja4", "") or ""
+        assert re.fullmatch(r"t13d\d{4}h2_[0-9a-f]{12}_[0-9a-f]{12}", ja4), f"Unexpected JA4 format: {ja4!r}"
+        # The HTTP/2 Akamai fingerprint must be captured and non-empty.
+        akamai_hash = data.get("http2", {}).get("akamai_fingerprint_hash", "") or ""
+        assert akamai_hash, "Expected non-empty HTTP/2 Akamai fingerprint hash"
+        logger.info(f"[tls.peet.ws] Dynamic JA3/JA4/Akamai verified ({impersonate}/{header_mode}): {ja3} / {ja4}")
 
     def test_sannysoft_bot_detection(self, proxy_server: tuple[str, str, str, str, bool]) -> None:
         """bot.sannysoft.com checks TLS fingerprint and browser headers."""
@@ -408,13 +484,12 @@ class TestFingerprintBypass:
             "DNT": "1",
             "Sec-Fetch-Mode": "cors",
         }
-        proxies = {"https": proxy_url}
-        resp = requests.get(
+        resp = _get_with_retry(
             "https://tls.peet.ws/api/all",
-            proxies=proxies,
-            verify=ca_cert_path,
+            proxy_url,
+            ca_cert_path,
+            impersonate,
             headers=client_headers,
-            timeout=30,
         )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
 
@@ -501,3 +576,55 @@ class TestFingerprintBypass:
         logger.info(
             f"[tls.peet.ws/api/all] cffi-defaults header-set verified ({impersonate}/{header_mode}+strip={strip_leak}): UA={ua[:40]}..."
         )
+
+    def test_tls_browserleaks_fingerprint(self, proxy_server: tuple[str, str, str, str, bool]) -> None:
+        """tls.browserleaks.com/json: second independent fingerprint observer.
+
+        Asserts the JA4 handshake fingerprint format (TLS 1.3 over HTTP/2),
+        non-empty normalized-JA3 and Akamai HTTP/2 fingerprints, and that the
+        reflected User-Agent is the impersonation profile's curated browser UA.
+        """
+        proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
+        resp = _get_with_retry(
+            "https://tls.browserleaks.com/json",
+            proxy_url,
+            ca_cert_path,
+            impersonate,
+            inject_leak_headers=strip_leak,
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+
+        data = resp.json()
+        ja4 = data.get("ja4", "") or ""
+        assert re.fullmatch(r"t13d\d{4}h2_[0-9a-f]{12}_[0-9a-f]{12}", ja4), f"Unexpected JA4 format: {ja4!r}"
+        assert data.get("ja3n_hash"), "Expected non-empty normalized JA3 hash"
+        # The HTTP/2 Akamai fingerprint must be captured: hash plus the
+        # settings/priority text ("1:65536;2:0;...|<fp>|0|m,a,s,p").
+        assert data.get("akamai_hash"), "Expected non-empty Akamai fingerprint hash"
+        akamai_text = data.get("akamai_text", "") or ""
+        assert re.fullmatch(r"\d+:\d+(?:;\d+:\d+)*\|[0-9a-f]+\|\d+\|[a-z](?:,[a-z])*", akamai_text), (
+            f"Unexpected Akamai fingerprint text format: {akamai_text!r}"
+        )
+        _assert_profile_user_agent(data.get("user_agent", ""), impersonate)
+        logger.info(f"[tls.browserleaks] JA4/Akamai verified ({impersonate}/{header_mode}): {ja4}")
+
+    def test_cloudflare_trace_coherence(self, proxy_server: tuple[str, str, str, str, bool]) -> None:
+        """cloudflare.com/cdn-cgi/trace: protocol + UA coherence through the proxy.
+
+        Asserts the trace reflects the impersonation profile's curated browser
+        UA, that HTTP/2 is negotiated end-to-end, and TLS 1.3 is in use.
+        """
+        proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
+        resp = _get_with_retry(
+            "https://www.cloudflare.com/cdn-cgi/trace",
+            proxy_url,
+            ca_cert_path,
+            impersonate,
+            inject_leak_headers=strip_leak,
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+        trace = dict(line.split("=", 1) for line in resp.text.strip().splitlines() if "=" in line)
+        _assert_profile_user_agent(trace.get("uag", ""), impersonate)
+        assert trace.get("http") == "http/2", f"Expected HTTP/2 upstream, got {trace.get('http')!r}"
+        assert trace.get("tls") == "TLSv1.3", f"Expected TLSv1.3, got {trace.get('tls')!r}"
+        logger.info(f"[cloudflare trace] h2/TLS1.3/UA verified ({impersonate}/{header_mode})")

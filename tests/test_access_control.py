@@ -166,9 +166,7 @@ class TestAllowFromIntegration:
         server, proxy_url = _start_server(ctx)
         try:
             with patch("impersonate_proxy.server.do_request", lambda *a, **k: _FakeResponse()):
-                status, _ = _raw_request(
-                    proxy_url, b"GET http://allowed.test/x HTTP/1.1\r\nHost: allowed.test\r\n\r\n"
-                )
+                status, _ = _raw_request(proxy_url, b"GET http://allowed.test/x HTTP/1.1\r\nHost: allowed.test\r\n\r\n")
             assert status == 200
         finally:
             server.shutdown()

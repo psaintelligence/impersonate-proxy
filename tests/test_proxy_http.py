@@ -329,9 +329,9 @@ class TestMaxThreads:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             results = list(
                 pool.map(
-                    lambda i: requests.get(
-                        f"{upstream_server}/slow", proxies={"http": proxy_url}, timeout=15
-                    ).status_code,
+                    lambda i: (
+                        requests.get(f"{upstream_server}/slow", proxies={"http": proxy_url}, timeout=15).status_code
+                    ),
                     range(8),
                 )
             )
