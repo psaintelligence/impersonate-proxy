@@ -10,6 +10,7 @@ import logging
 import select
 import socket
 import threading
+import time
 import urllib.parse
 from collections.abc import Iterable, Iterator, Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -53,6 +54,16 @@ class _BodyTooLargeError(Exception):
     """Raised when a client request body exceeds ProxyConfig.max_body_size."""
 
 
+def _host_matches_list(host: str, entries: tuple[str, ...]) -> bool:
+    """Return True when host matches an entry by exact match or ``.suffix``."""
+    host = host.lower().rstrip(".")
+    for entry in entries:
+        entry = entry.lower().rstrip(".")
+        if entry and (host == entry or host.endswith(f".{entry}")):
+            return True
+    return False
+
+
 def is_host_blocked(ctx: ProxyContext, host: str) -> bool:
     """Return True when host matches a ProxyConfig.block_hosts entry.
 
@@ -60,11 +71,43 @@ def is_host_blocked(ctx: ProxyContext, host: str) -> bool:
     matching: an entry ``example.com`` blocks both ``example.com`` and any
     ``*.example.com`` subdomain, but not ``notexample.com``.
     """
-    host = host.lower().rstrip(".")
-    for entry in ctx.config.block_hosts:
-        entry = entry.lower().rstrip(".")
-        if host == entry or host.endswith(f".{entry}"):
-            return True
+    return _host_matches_list(host, ctx.config.block_hosts)
+
+
+def is_host_raw_tunnel(ctx: ProxyContext, host: str) -> bool:
+    """Return True when host matches a ProxyConfig.raw_tunnel_hosts entry."""
+    return _host_matches_list(host, ctx.config.raw_tunnel_hosts)
+
+
+def _is_private_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True when addr is non-global (loopback, RFC1918, link-local, CGNAT, ULA, multicast)."""
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return (not addr.is_global) or addr.is_multicast
+
+
+def is_target_private(ctx: ProxyContext, host: str) -> bool:
+    """Return True when ``--block-private-ips`` is active and host is/resolves to a private IP."""
+    if not ctx.config.block_private_ips:
+        return False
+    clean = host.strip("[]").rstrip(".")
+    if not clean:
+        return True
+    try:
+        return _is_private_ip(ipaddress.ip_address(clean))
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(clean, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for info in infos:
+        sockaddr = info[4]
+        try:
+            if _is_private_ip(ipaddress.ip_address(sockaddr[0])):
+                return True
+        except ValueError:
+            continue
     return False
 
 
@@ -345,6 +388,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             logger.warning(f"CONNECT to blocked host: {self.ctx.show_identifying(host)}")
             self._reject_client(403, "Forbidden host")
             return
+        if is_target_private(self.ctx, host):
+            logger.warning(f"CONNECT to private target blocked: {self.ctx.show_identifying(host)}")
+            self._reject_client(403, "Forbidden private target")
+            return
 
         netblock = get_client_netblock(client_ip)
         if not self.ctx.config.quiet:
@@ -353,9 +400,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200, "Connection established")
         self.end_headers()
 
-        if self.ctx.ca_key is None:
+        if self.ctx.ca_key is None or is_host_raw_tunnel(self.ctx, host):
+            reason = "raw-tunnel-host" if self.ctx.ca_key is not None else "no CA"
             if not self.ctx.config.quiet:
-                logger.info(f"CONNECT {self.ctx.show_identifying(f'{host}:{port}')} (raw tunnel, no impersonation)")
+                logger.info(f"CONNECT {self.ctx.show_identifying(f'{host}:{port}')} (raw tunnel, {reason})")
             raw_tunnel(self.ctx, self.connection, host, port)
             self.close_connection = True
             return
@@ -515,8 +563,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             f"(headers={sanitize_headers(fwd_headers)})"
         )
         self.ctx.stats.record_request("mitm")
+        started = time.monotonic()
         r = do_request(self.ctx, method, url, fwd_headers, body, allow_redirects=False)
         if r is None:
+            self.ctx.stats.record_request_duration(time.monotonic() - started)
             self.ctx.stats.record_upstream_failure()
             self.ctx.stats.record_status(502)
             wfile.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -529,6 +579,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
                 logger.info(f"CONNECT-MITM {method} {self.ctx.show_identifying(url)} -> {r.status_code}")
             return r.status_code
         finally:
+            self.ctx.stats.record_request_duration(time.monotonic() - started)
             r.close()
 
     def _is_local_healthcheck_client(self, client_ip: str) -> bool:
@@ -577,6 +628,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             logger.warning(f"HTTP Proxy request to blocked host: {self.ctx.show_identifying(host)}")
             self._reject_client(403, "Forbidden host")
             return
+        if is_target_private(self.ctx, host):
+            logger.warning(f"HTTP Proxy request to private target blocked: {self.ctx.show_identifying(host)}")
+            self._reject_client(403, "Forbidden private target")
+            return
         if not self.ctx.config.quiet:
             logger.info(f"{self.command} request from {netblock} to {host}")
 
@@ -603,8 +658,10 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         )
 
         self.ctx.stats.record_request("plain_http")
+        started = time.monotonic()
         resp = do_request(self.ctx, self.command, url, headers, body)
         if resp is None:
+            self.ctx.stats.record_request_duration(time.monotonic() - started)
             logger.error(f"HTTP Proxy upstream request failed for: {self.ctx.show_identifying(url)}")
             self.ctx.stats.record_upstream_failure()
             self.ctx.stats.record_status(502)
@@ -649,6 +706,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             else:
                 logger.error(f"HTTP Proxy handler error for {self.ctx.show_identifying(url)}: {e}")
         finally:
+            self.ctx.stats.record_request_duration(time.monotonic() - started)
             resp.close()
 
     do_GET = _proxy
@@ -693,10 +751,12 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
             raise
 
     def process_request_thread(self, request: Any, client_address: Any) -> None:
-        """Run the handler and release the thread slot afterwards."""
+        """Run the handler, track active threads, and release the thread slot afterwards."""
+        self.ctx.stats.record_thread_started()
         try:
             super().process_request_thread(request, client_address)
         finally:
+            self.ctx.stats.record_thread_finished()
             if self._thread_slots is not None:
                 self._thread_slots.release()
 

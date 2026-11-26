@@ -78,6 +78,26 @@ class TestSessionManagement:
         assert ctx.session_pool.empty()
         fake_sess.close.assert_called_once()
 
+    def test_curl_share_reused_and_recreated_after_clear(self):
+        """ProxyContext shares a single CurlShare across sessions and recreates cleanly after clear."""
+        ctx = ProxyContext(ProxyConfig())
+        share1 = ctx.get_curl_share()
+        assert ctx.get_curl_share() is share1
+        s1 = get_session(ctx)
+        release_session(ctx, s1)
+        ctx.clear_session_pool()
+        share2 = ctx.get_curl_share()
+        assert share2 is not share1
+        ctx.clear_session_pool()
+
+    def test_parse_dns_option_ip_list_and_doh(self):
+        from impersonate_proxy.session_pool import _parse_dns_option
+
+        assert _parse_dns_option(None) == (None, None)
+        assert _parse_dns_option("   ") == (None, None)
+        assert _parse_dns_option("1.1.1.1, 8.8.8.8") == (["1.1.1.1", "8.8.8.8"], None)
+        assert _parse_dns_option("https://1.1.1.1/dns-query") == (None, "https://1.1.1.1/dns-query")
+
 
 class TestRedactionUtilities:
     def test_show_identifying_redacts_by_default(self):

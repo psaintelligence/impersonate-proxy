@@ -65,16 +65,19 @@ Run `impersonate-proxy --help` to view all available parameters:
 usage: impersonate-proxy [-h] [--port PORT] [--host HOST]
                          [--impersonate IMPERSONATE] [--cffi-defaults |
                          --passthrough-headers] [--strip-client-leak-headers]
-                         [--upstream-proxy UPSTREAM_PROXY]
+                         [--upstream-proxy UPSTREAM_PROXY] [--dns DNS]
                          [--no-fingerprint-real]
                          [--session-pool-max SESSION_POOL_MAX]
                          [--connect-timeout CONNECT_TIMEOUT]
                          [--read-timeout READ_TIMEOUT]
                          [--max-body-size MAX_BODY_SIZE]
                          [--tunnel-idle-timeout TUNNEL_IDLE_TIMEOUT]
-                         [--block-host BLOCK_HOST] [--proxy-auth PROXY_AUTH]
+                         [--block-host BLOCK_HOST]
+                         [--raw-tunnel-host RAW_TUNNEL_HOST]
+                         [--block-private-ips] [--proxy-auth PROXY_AUTH]
                          [--allow-from ALLOW_FROM] [--stats-port STATS_PORT]
-                         [--max-threads MAX_THREADS] [--ca-dir CA_DIR]
+                         [--max-threads MAX_THREADS]
+                         [--log-format {text,json}] [--ca-dir CA_DIR]
                          [--debug] [--quiet]
 
 HTTP/HTTPS proxy that impersonates browser TLS fingerprints
@@ -107,6 +110,9 @@ options:
   --upstream-proxy UPSTREAM_PROXY
                         Upstream egress proxy URL (e.g. http://127.0.0.1:8080
                         or IMPERSONATE_PROXY_UPSTREAM_PROXY)
+  --dns DNS             Custom upstream DNS server IP(s) (comma-separated,
+                        e.g. 1.1.1.1,8.8.8.8) or DNS-over-HTTPS URL (e.g.
+                        https://1.1.1.1/dns-query). Or IMPERSONATE_PROXY_DNS
   --no-fingerprint-real
                         Disable injection of platform-coherent full-build UA +
                         complete Sec-CH-UA family on top of curl_cffi's TLS
@@ -134,7 +140,17 @@ options:
   --block-host BLOCK_HOST
                         Comma-separated target hostnames to refuse with 403
                         (exact or suffix match: example.com also blocks
-                        *.example.com). Or IMPERSONATE_PROXY_BLOCK_HOST
+                        *.example.com; prefix @/path/to/file for SIGHUP-
+                        reloadable lists). Or IMPERSONATE_PROXY_BLOCK_HOST
+  --raw-tunnel-host RAW_TUNNEL_HOST
+                        Comma-separated target hostnames to bypass MITM and
+                        relay via raw TCP tunnel on CONNECT (exact or suffix
+                        match; supports @/path/to/file and SIGHUP reload). Or
+                        IMPERSONATE_PROXY_RAW_TUNNEL_HOST
+  --block-private-ips   Refuse requests targeting private, loopback, link-
+                        local (cloud metadata), CGNAT, ULA, or multicast IP
+                        addresses with 403 (SSRF protection). Or
+                        IMPERSONATE_PROXY_BLOCK_PRIVATE_IPS=true
   --proxy-auth PROXY_AUTH
                         Require Proxy-Authorization: Basic auth with these
                         user:password credentials on every request; reply 407
@@ -143,7 +159,8 @@ options:
   --allow-from ALLOW_FROM
                         Comma-separated client allowlist: bare IPs (matched
                         via the /24 or /64 auto-netblock, e.g. 192.168.1.7) or
-                        explicit CIDRs (e.g. 10.0.0.0/8); other clients are
+                        explicit CIDRs (e.g. 10.0.0.0/8; supports
+                        @/path/to/file and SIGHUP reload); other clients are
                         refused with 403. Or IMPERSONATE_PROXY_ALLOW_FROM
   --stats-port STATS_PORT
                         Serve Prometheus metrics at /metrics on this port (off
@@ -152,6 +169,9 @@ options:
                         Maximum concurrent handler threads; excess connections
                         wait in the listen backlog (default: 0 = unlimited, or
                         IMPERSONATE_PROXY_MAX_THREADS)
+  --log-format {text,json}
+                        Log output format: 'text' (default) or 'json'. Or
+                        IMPERSONATE_PROXY_LOG_FORMAT
   --ca-dir, -c CA_DIR   Directory to store/load CA certificate and key
                         (default: ~/.config/impersonate-proxy or
                         IMPERSONATE_PROXY_CA_DIR)
@@ -165,11 +185,17 @@ The two header-mode flags are mutually exclusive. The default mode is
 `--cffi-defaults`. Equivalent environment variables are
 `IMPERSONATE_PROXY_HEADER_MODE` (one of `passthrough`, `cffi-defaults`),
 `IMPERSONATE_PROXY_STRIP_CLIENT_LEAK_HEADERS`, `IMPERSONATE_PROXY_UPSTREAM_PROXY`,
-`IMPERSONATE_PROXY_SESSION_POOL_MAX`, `IMPERSONATE_PROXY_CONNECT_TIMEOUT`,
-`IMPERSONATE_PROXY_READ_TIMEOUT`, `IMPERSONATE_PROXY_MAX_BODY_SIZE`,
-`IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`, `IMPERSONATE_PROXY_BLOCK_HOST`,
-`IMPERSONATE_PROXY_PROXY_AUTH`, `IMPERSONATE_PROXY_ALLOW_FROM`,
-`IMPERSONATE_PROXY_STATS_PORT`, and `IMPERSONATE_PROXY_MAX_THREADS`.
+`IMPERSONATE_PROXY_DNS`, `IMPERSONATE_PROXY_SESSION_POOL_MAX`,
+`IMPERSONATE_PROXY_CONNECT_TIMEOUT`, `IMPERSONATE_PROXY_READ_TIMEOUT`,
+`IMPERSONATE_PROXY_MAX_BODY_SIZE`, `IMPERSONATE_PROXY_TUNNEL_IDLE_TIMEOUT`,
+`IMPERSONATE_PROXY_BLOCK_HOST`, `IMPERSONATE_PROXY_RAW_TUNNEL_HOST`,
+`IMPERSONATE_PROXY_BLOCK_PRIVATE_IPS`, `IMPERSONATE_PROXY_PROXY_AUTH`,
+`IMPERSONATE_PROXY_ALLOW_FROM`, `IMPERSONATE_PROXY_STATS_PORT`,
+`IMPERSONATE_PROXY_MAX_THREADS`, and `IMPERSONATE_PROXY_LOG_FORMAT`.
+
+`--block-host`, `--allow-from`, and `--raw-tunnel-host` also accept `@/path/to/file`
+entries (one item per line, `#` comments ignored) and reload live on `SIGHUP`
+without interrupting active connections.
 
 An unknown `--impersonate` target is rejected at startup (exit code 2) with a
 list of valid `curl_cffi` targets — it would otherwise fail lazily on the first

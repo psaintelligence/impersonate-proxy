@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import pytest
 import requests
 
 from impersonate_proxy.context import ProxyConfig, ProxyContext
@@ -52,6 +53,23 @@ class TestProxyStatsCounters:
         stats.record_session_leased()
         assert stats.snapshot(0).pool_high_water == 1
 
+    def test_active_threads_and_request_duration_histogram(self):
+        stats = ProxyStats()
+        stats.record_thread_started()
+        stats.record_thread_started()
+        stats.record_thread_finished()
+        stats.record_request_duration(0.005)
+        stats.record_request_duration(0.2)
+        stats.record_request_duration(45.0)
+        snap = stats.snapshot(0)
+        assert snap.active_threads == 1
+        assert snap.duration_count == 3
+        assert snap.duration_sum == pytest.approx(45.205)
+        buckets = dict(snap.duration_buckets)
+        assert buckets[0.01] == 1
+        assert buckets[0.25] == 2
+        assert buckets[30.0] == 2
+
 
 class TestRenderMetrics:
     def test_prometheus_text_format(self):
@@ -63,6 +81,8 @@ class TestRenderMetrics:
         stats.record_status(502)
         stats.record_upstream_failure()
         stats.record_session_leased()
+        stats.record_thread_started()
+        stats.record_request_duration(0.05)
         text = render_metrics(stats.snapshot(7))
         assert "# TYPE impersonate_proxy_requests_total counter" in text
         assert 'impersonate_proxy_requests_total{mode="mitm"} 2' in text
@@ -71,6 +91,11 @@ class TestRenderMetrics:
         assert 'impersonate_proxy_client_status_total{status_class="4xx"} 1' in text
         assert 'impersonate_proxy_client_status_total{status_class="5xx"} 1' in text
         assert "impersonate_proxy_session_pool_high_water 1" in text
+        assert "impersonate_proxy_active_threads 1" in text
+        assert "# TYPE impersonate_proxy_request_duration_seconds histogram" in text
+        assert 'impersonate_proxy_request_duration_seconds_bucket{le="0.05"} 1' in text
+        assert 'impersonate_proxy_request_duration_seconds_bucket{le="+Inf"} 1' in text
+        assert "impersonate_proxy_request_duration_seconds_count 1" in text
         assert "impersonate_proxy_cert_cache_size 7" in text
         assert text.endswith("\n")
 

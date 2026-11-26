@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("impersonate-proxy")
 
+# Upper bounds (in seconds) for the upstream request duration histogram.
+_DURATION_BUCKETS: tuple[float, ...] = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0)
+
 
 @dataclass(frozen=True)
 class MetricsSnapshot:
@@ -26,6 +29,10 @@ class MetricsSnapshot:
     status_classes: dict[str, int]
     upstream_failures: int
     pool_high_water: int
+    active_threads: int
+    duration_buckets: tuple[tuple[float, int], ...]
+    duration_count: int
+    duration_sum: float
     cert_cache_size: int
 
 
@@ -39,6 +46,10 @@ class ProxyStats:
         self._upstream_failures = 0
         self._sessions_leased = 0
         self._pool_high_water = 0
+        self._active_threads = 0
+        self._duration_buckets: list[int] = [0] * len(_DURATION_BUCKETS)
+        self._duration_count = 0
+        self._duration_sum = 0.0
 
     def record_request(self, mode: str) -> None:
         """Count one client request forwarded upstream for the given mode."""
@@ -69,6 +80,26 @@ class ProxyStats:
         with self._lock:
             self._sessions_leased = max(0, self._sessions_leased - 1)
 
+    def record_thread_started(self) -> None:
+        """Increment the currently active handler thread count."""
+        with self._lock:
+            self._active_threads += 1
+
+    def record_thread_finished(self) -> None:
+        """Decrement the currently active handler thread count."""
+        with self._lock:
+            self._active_threads = max(0, self._active_threads - 1)
+
+    def record_request_duration(self, duration_seconds: float) -> None:
+        """Observe one upstream request duration in seconds."""
+        elapsed = max(0.0, duration_seconds)
+        with self._lock:
+            self._duration_count += 1
+            self._duration_sum += elapsed
+            for i, bound in enumerate(_DURATION_BUCKETS):
+                if elapsed <= bound:
+                    self._duration_buckets[i] += 1
+
     def snapshot(self, cert_cache_size: int) -> MetricsSnapshot:
         """Return a consistent copy of all counters plus the given gauge."""
         with self._lock:
@@ -77,6 +108,10 @@ class ProxyStats:
                 status_classes=dict(self._status_classes),
                 upstream_failures=self._upstream_failures,
                 pool_high_water=self._pool_high_water,
+                active_threads=self._active_threads,
+                duration_buckets=tuple(zip(_DURATION_BUCKETS, self._duration_buckets, strict=True)),
+                duration_count=self._duration_count,
+                duration_sum=self._duration_sum,
                 cert_cache_size=cert_cache_size,
             )
 
@@ -107,6 +142,20 @@ def render_metrics(snapshot: MetricsSnapshot) -> str:
             "# HELP impersonate_proxy_session_pool_high_water Maximum concurrently leased curl_cffi sessions.",
             "# TYPE impersonate_proxy_session_pool_high_water gauge",
             f"impersonate_proxy_session_pool_high_water {snapshot.pool_high_water}",
+            "# HELP impersonate_proxy_active_threads Number of handler threads currently serving client connections.",
+            "# TYPE impersonate_proxy_active_threads gauge",
+            f"impersonate_proxy_active_threads {snapshot.active_threads}",
+            "# HELP impersonate_proxy_request_duration_seconds Upstream request handling duration in seconds.",
+            "# TYPE impersonate_proxy_request_duration_seconds histogram",
+        ]
+    )
+    for bound, count in snapshot.duration_buckets:
+        lines.append(f'impersonate_proxy_request_duration_seconds_bucket{{le="{bound}"}} {count}')
+    lines.extend(
+        [
+            f'impersonate_proxy_request_duration_seconds_bucket{{le="+Inf"}} {snapshot.duration_count}',
+            f"impersonate_proxy_request_duration_seconds_sum {snapshot.duration_sum:.6f}",
+            f"impersonate_proxy_request_duration_seconds_count {snapshot.duration_count}",
             "# HELP impersonate_proxy_cert_cache_size Number of host SSL contexts currently cached.",
             "# TYPE impersonate_proxy_cert_cache_size gauge",
             f"impersonate_proxy_cert_cache_size {snapshot.cert_cache_size}",

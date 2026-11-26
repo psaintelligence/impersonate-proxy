@@ -400,3 +400,36 @@ class TestRawTunnelFallback:
         finally:
             server.shutdown()
             ctx.clear_session_pool()
+
+    def test_raw_tunnel_host_bypasses_mitm_even_with_ca(self):
+        """A host listed in --raw-tunnel-host relays raw bytes instead of MITM decryption."""
+        with tempfile.TemporaryDirectory() as ca_dir:
+            ctx = ProxyContext(ProxyConfig(ca_dir=ca_dir, raw_tunnel_hosts=("127.0.0.1",)))
+            init_ca(ctx, ca_dir)
+            assert ctx.ca_key is not None
+
+            upstream = socket.socket()
+            upstream.bind(("127.0.0.1", 0))
+            upstream.listen(1)
+            upstream_port = upstream.getsockname()[1]
+
+            server, proxy_url = start_proxy(ctx)
+            port = int(proxy_url.rsplit(":", 1)[1])
+            try:
+                raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+                raw.sendall(f"CONNECT 127.0.0.1:{upstream_port} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".encode())
+                _read_response(raw)
+                raw.sendall(b"raw-pinned-bytes")
+                conn, _ = upstream.accept()
+                received = conn.recv(4096)
+                conn.sendall(b"raw-reply")
+                conn.close()
+                upstream.close()
+                echoed = raw.recv(4096)
+                raw.close()
+                assert received == b"raw-pinned-bytes"
+                assert echoed == b"raw-reply"
+                assert ctx.stats.snapshot(0).requests.get("raw_tunnel") == 1
+            finally:
+                server.shutdown()
+                ctx.clear_session_pool()

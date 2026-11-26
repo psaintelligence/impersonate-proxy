@@ -1,5 +1,6 @@
 """Configuration dataclass and operational state container for impersonate-proxy."""
 
+import contextlib
 import logging
 import queue
 import ssl
@@ -7,6 +8,8 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from curl_cffi import CurlShare
 
 from impersonate_proxy.stats import ProxyStats
 
@@ -43,6 +46,14 @@ class ProxyConfig:
     tunnel_idle_timeout: float = 30.0
     # Target hostnames to refuse (exact or suffix match). Empty allows all.
     block_hosts: tuple[str, ...] = ()
+    # Target hostnames to bypass MITM and relay via raw TCP tunnel (exact or suffix match).
+    raw_tunnel_hosts: tuple[str, ...] = ()
+    # Block egress to private/loopback/link-local/non-global IPs (SSRF protection).
+    block_private_ips: bool = False
+    # Custom upstream DNS server IP(s) (comma-separated) or DoH URL (https://...).
+    dns: str | None = None
+    # Log format: 'text' (default) or 'json'.
+    log_format: str = "text"
     # user:password required in Proxy-Authorization: Basic (None disables auth).
     proxy_auth: str | None = None
     # Client allowlist entries: bare IP (auto /24|/64 netblock) or explicit CIDR.
@@ -58,6 +69,9 @@ class ProxyConfig:
                 self.header_mode,
             )
             self.header_mode = "cffi-defaults"
+        if self.log_format not in ("text", "json"):
+            logger.warning("Unknown log_format=%r; falling back to 'text'.", self.log_format)
+            self.log_format = "text"
 
 
 class ProxyContext:
@@ -82,16 +96,30 @@ class ProxyContext:
         effective_pool_max = session_pool_max if session_pool_max is not None else self.config.session_pool_max
         self.session_pool_max: int = effective_pool_max
         self.session_pool: queue.Queue[cffi_requests.Session[Any]] = queue.Queue(maxsize=effective_pool_max)
+        self._curl_share_lock: threading.Lock = threading.Lock()
+        self._curl_share: CurlShare | None = None
+
+    def get_curl_share(self) -> CurlShare:
+        """Return the context's shared DNS + TLS-session CurlShare (never shares cookies)."""
+        with self._curl_share_lock:
+            if self._curl_share is None:
+                self._curl_share = CurlShare(connect=False, dns=True, ssl_session=True)
+            return self._curl_share
 
     def show_identifying(self, val: str) -> str:
         """Return val if debug mode is active, otherwise '[redacted]'."""
         return val if self.config.debug else "[redacted]"
 
     def clear_session_pool(self) -> None:
-        """Close and clear all idle sessions in the pool."""
+        """Close and clear all idle sessions in the pool, then release CurlShare if unused."""
         while not self.session_pool.empty():
             try:
                 sess = self.session_pool.get_nowait()
                 sess.close()
             except queue.Empty:
                 break
+        with self._curl_share_lock:
+            if self._curl_share is not None:
+                with contextlib.suppress(Exception):
+                    self._curl_share.close()
+                self._curl_share = None

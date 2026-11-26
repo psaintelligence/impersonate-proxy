@@ -35,6 +35,23 @@ _RETRYABLE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 warnings.filterwarnings("ignore", category=CurlCffiWarning, message="Extra fingerprints were altered")
 
 
+def _parse_dns_option(dns: str | None) -> tuple[list[str] | None, str | None]:
+    """Split ProxyConfig.dns into ``(dns_servers, doh_url)`` for curl_cffi.Session.
+
+    URLs starting with ``http://`` or ``https://`` are routed to ``doh_url``
+    (DNS-over-HTTPS); comma-separated IP/IP:port values are passed as ``dns``.
+    """
+    if not dns:
+        return None, None
+    cleaned = dns.strip()
+    if not cleaned:
+        return None, None
+    if cleaned.lower().startswith(("https://", "http://")):
+        return None, cleaned
+    servers = [s.strip() for s in cleaned.split(",") if s.strip()]
+    return (servers or None), None
+
+
 def get_session(ctx: ProxyContext) -> cffi_requests.Session[Any]:
     """Get a reused curl_cffi session from the pool or create a new one.
 
@@ -43,16 +60,21 @@ def get_session(ctx: ProxyContext) -> cffi_requests.Session[Any]:
     clobber another client's ``Cookie`` header. ``trust_env=False`` prevents
     the proxy from accidentally looping through ambient ``HTTP_PROXY`` /
     ``HTTPS_PROXY`` variables; egress proxying is configured explicitly via
-    ``--upstream-proxy``.
+    ``--upstream-proxy``. ``curl_share`` shares only DNS and TLS session caches
+    across pooled threads (never cookies or connections).
     """
     ctx.stats.record_session_leased()
     try:
         return ctx.session_pool.get_nowait()
     except queue.Empty:
+        dns_servers, doh_url = _parse_dns_option(ctx.config.dns)
         return cffi_requests.Session(
             impersonate=ctx.config.impersonate,
             discard_cookies=True,
             trust_env=False,
+            curl_share=ctx.get_curl_share(),
+            dns=dns_servers,
+            doh_url=doh_url,
         )
 
 

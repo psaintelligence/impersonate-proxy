@@ -24,17 +24,117 @@ Environment variables:
 """
 
 import argparse
+import datetime
 import importlib.metadata
+import json
 import logging
 import os
 import signal
 import sys
+import threading
 
 from impersonate_proxy import cert_manager
 from impersonate_proxy.context import ProxyConfig, ProxyContext
 from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 
 logger: logging.Logger = logging.getLogger("impersonate-proxy")
+
+
+class _JsonLogFormatter(logging.Formatter):
+    """Emit each log record as a single JSON line for container log pipelines."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "timestamp": datetime.datetime.fromtimestamp(record.created, tz=datetime.UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload, separators=(",", ":"))
+
+
+def configure_logging(*, debug: bool = False, log_format: str = "text") -> None:
+    """Configure root stdout logging in ``text`` or ``json`` format."""
+    handler = logging.StreamHandler(sys.stdout)
+    if log_format == "json":
+        handler.setFormatter(_JsonLogFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.INFO,
+        handlers=[handler],
+        force=True,
+    )
+
+
+def parse_entry_spec(spec: str, *, lowercase: bool = False) -> tuple[str, ...]:
+    """Parse a comma-separated list spec, expanding any ``@/path/to/file`` entries.
+
+    Files referenced with ``@`` are read line-by-line (blank lines and ``#``
+    comments are ignored, and inline commas are also split).
+    """
+    items: list[str] = []
+    for token in spec.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if token.startswith("@"):
+            file_path = token[1:].strip()
+            with open(file_path, encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    for part in line.split(","):
+                        part = part.strip()
+                        if part:
+                            items.append(part.lower() if lowercase else part)
+        else:
+            items.append(token.lower() if lowercase else token)
+    return tuple(items)
+
+
+def reload_access_lists(
+    ctx: ProxyContext,
+    *,
+    block_host_spec: str | None = None,
+    allow_from_spec: str | None = None,
+    raw_tunnel_host_spec: str | None = None,
+) -> bool:
+    """Reload ``block_hosts``, ``allow_from``, and ``raw_tunnel_hosts`` from their specs.
+
+    Atomic per-list update: if reading any ``@file`` fails, the previous list
+    remains intact and ``False`` is returned.
+    """
+    ok = True
+    if block_host_spec is not None:
+        try:
+            ctx.config.block_hosts = parse_entry_spec(block_host_spec, lowercase=True)
+        except OSError as e:
+            logger.error(f"SIGHUP reload failed for --block-host: {e}")
+            ok = False
+    if allow_from_spec is not None:
+        try:
+            ctx.config.allow_from = parse_entry_spec(allow_from_spec, lowercase=False)
+        except OSError as e:
+            logger.error(f"SIGHUP reload failed for --allow-from: {e}")
+            ok = False
+    if raw_tunnel_host_spec is not None:
+        try:
+            ctx.config.raw_tunnel_hosts = parse_entry_spec(raw_tunnel_host_spec, lowercase=True)
+        except OSError as e:
+            logger.error(f"SIGHUP reload failed for --raw-tunnel-host: {e}")
+            ok = False
+    if ok:
+        logger.info(
+            "Reloaded access/routing lists (block_hosts=%d, allow_from=%d, raw_tunnel_hosts=%d)",
+            len(ctx.config.block_hosts),
+            len(ctx.config.allow_from),
+            len(ctx.config.raw_tunnel_hosts),
+        )
+    return ok
 
 
 def _sigterm_handler(signum: int, frame: object) -> None:
@@ -80,10 +180,15 @@ def run(
     max_body_size: int = 512 * 1024 * 1024,
     tunnel_idle_timeout: float = 30.0,
     block_hosts: tuple[str, ...] = (),
+    raw_tunnel_hosts: tuple[str, ...] = (),
+    block_private_ips: bool = False,
+    dns: str | None = None,
+    log_format: str = "text",
     proxy_auth: str | None = None,
     allow_from: tuple[str, ...] = (),
     stats_port: int | None = None,
     max_threads: int = 0,
+    reload_sources: dict[str, str] | None = None,
     ctx: ProxyContext | None = None,
 ) -> None:
     """Run the proxy server with the given configuration until interrupted."""
@@ -105,6 +210,10 @@ def run(
         max_body_size=max_body_size,
         tunnel_idle_timeout=tunnel_idle_timeout,
         block_hosts=block_hosts,
+        raw_tunnel_hosts=raw_tunnel_hosts,
+        block_private_ips=block_private_ips,
+        dns=dns,
+        log_format=log_format,
         proxy_auth=proxy_auth,
         allow_from=allow_from,
         max_threads=max_threads,
@@ -120,6 +229,23 @@ def run(
         from impersonate_proxy.stats import start_stats_server
 
         stats_server = start_stats_server(target_ctx, host, stats_port)
+
+    prev_sighup = None
+    has_sighup = hasattr(signal, "SIGHUP") and threading.current_thread() is threading.main_thread()
+    if has_sighup:
+        sources = reload_sources or {}
+
+        def _sighup_handler(signum: int, frame: object) -> None:
+            del signum, frame
+            reload_access_lists(
+                target_ctx,
+                block_host_spec=sources.get("block_host"),
+                allow_from_spec=sources.get("allow_from"),
+                raw_tunnel_host_spec=sources.get("raw_tunnel_host"),
+            )
+
+        prev_sighup = signal.signal(signal.SIGHUP, _sighup_handler)
+
     try:
         curl_cffi_version = importlib.metadata.version("curl_cffi")
     except importlib.metadata.PackageNotFoundError:
@@ -137,6 +263,8 @@ def run(
         logger.info("Keyboard interrupt received, shutting down...")
     finally:
         logger.info("Shutting down proxy server and clearing session pool...")
+        if has_sighup and prev_sighup is not None:
+            signal.signal(signal.SIGHUP, prev_sighup)
         server.server_close()
         if stats_server is not None:
             stats_server.shutdown()
@@ -201,6 +329,12 @@ def main() -> None:
         help="Upstream egress proxy URL (e.g. http://127.0.0.1:8080 or IMPERSONATE_PROXY_UPSTREAM_PROXY)",
     )
     parser.add_argument(
+        "--dns",
+        default=os.environ.get("IMPERSONATE_PROXY_DNS", "").strip() or None,
+        help="Custom upstream DNS server IP(s) (comma-separated, e.g. 1.1.1.1,8.8.8.8) "
+        "or DNS-over-HTTPS URL (e.g. https://1.1.1.1/dns-query). Or IMPERSONATE_PROXY_DNS",
+    )
+    parser.add_argument(
         "--no-fingerprint-real",
         action="store_false",
         dest="fingerprint_real",
@@ -247,7 +381,23 @@ def main() -> None:
         "--block-host",
         default=os.environ.get("IMPERSONATE_PROXY_BLOCK_HOST", ""),
         help="Comma-separated target hostnames to refuse with 403 (exact or suffix "
-        "match: example.com also blocks *.example.com). Or IMPERSONATE_PROXY_BLOCK_HOST",
+        "match: example.com also blocks *.example.com; prefix @/path/to/file for "
+        "SIGHUP-reloadable lists). Or IMPERSONATE_PROXY_BLOCK_HOST",
+    )
+    parser.add_argument(
+        "--raw-tunnel-host",
+        default=os.environ.get("IMPERSONATE_PROXY_RAW_TUNNEL_HOST", ""),
+        help="Comma-separated target hostnames to bypass MITM and relay via raw TCP "
+        "tunnel on CONNECT (exact or suffix match; supports @/path/to/file and SIGHUP "
+        "reload). Or IMPERSONATE_PROXY_RAW_TUNNEL_HOST",
+    )
+    parser.add_argument(
+        "--block-private-ips",
+        action="store_true",
+        default=os.environ.get("IMPERSONATE_PROXY_BLOCK_PRIVATE_IPS", "false").lower() in ("true", "1", "yes"),
+        help="Refuse requests targeting private, loopback, link-local (cloud metadata), "
+        "CGNAT, ULA, or multicast IP addresses with 403 (SSRF protection). "
+        "Or IMPERSONATE_PROXY_BLOCK_PRIVATE_IPS=true",
     )
     parser.add_argument(
         "--proxy-auth",
@@ -260,8 +410,9 @@ def main() -> None:
         "--allow-from",
         default=os.environ.get("IMPERSONATE_PROXY_ALLOW_FROM", ""),
         help="Comma-separated client allowlist: bare IPs (matched via the /24 or /64 "
-        "auto-netblock, e.g. 192.168.1.7) or explicit CIDRs (e.g. 10.0.0.0/8); "
-        "other clients are refused with 403. Or IMPERSONATE_PROXY_ALLOW_FROM",
+        "auto-netblock, e.g. 192.168.1.7) or explicit CIDRs (e.g. 10.0.0.0/8; supports "
+        "@/path/to/file and SIGHUP reload); other clients are refused with 403. "
+        "Or IMPERSONATE_PROXY_ALLOW_FROM",
     )
     stats_port_env = os.environ.get("IMPERSONATE_PROXY_STATS_PORT", "").strip()
     parser.add_argument(
@@ -276,6 +427,12 @@ def main() -> None:
         default=int(os.environ.get("IMPERSONATE_PROXY_MAX_THREADS", "0")),
         help="Maximum concurrent handler threads; excess connections wait in the "
         "listen backlog (default: 0 = unlimited, or IMPERSONATE_PROXY_MAX_THREADS)",
+    )
+    parser.add_argument(
+        "--log-format",
+        choices=("text", "json"),
+        default=os.environ.get("IMPERSONATE_PROXY_LOG_FORMAT", "text").strip().lower() or "text",
+        help="Log output format: 'text' (default) or 'json'. Or IMPERSONATE_PROXY_LOG_FORMAT",
     )
     parser.add_argument(
         "--ca-dir",
@@ -302,15 +459,23 @@ def main() -> None:
     error_message = _impersonate_error_message(args.impersonate)
     if error_message:
         parser.error(error_message)
-    block_hosts = tuple(h.strip().lower() for h in args.block_host.split(",") if h.strip())
-    allow_from = tuple(e.strip() for e in args.allow_from.split(",") if e.strip())
-    logging.basicConfig(
-        level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-        force=True,
-    )
+    try:
+        block_hosts = parse_entry_spec(args.block_host, lowercase=True)
+        raw_tunnel_hosts = parse_entry_spec(args.raw_tunnel_host, lowercase=True)
+        allow_from = parse_entry_spec(args.allow_from, lowercase=False)
+    except OSError as e:
+        parser.error(f"Could not read list file: {e}")
+
+    reload_sources: dict[str, str] | None = None
+    if any("@" in s for s in (args.block_host, args.allow_from, args.raw_tunnel_host)):
+        reload_sources = {
+            "block_host": args.block_host,
+            "allow_from": args.allow_from,
+            "raw_tunnel_host": args.raw_tunnel_host,
+        }
+
+    configure_logging(debug=args.debug, log_format=args.log_format)
+
     run(
         host=args.host,
         port=args.port,
@@ -328,10 +493,15 @@ def main() -> None:
         max_body_size=args.max_body_size,
         tunnel_idle_timeout=args.tunnel_idle_timeout,
         block_hosts=block_hosts,
+        raw_tunnel_hosts=raw_tunnel_hosts,
+        block_private_ips=args.block_private_ips,
+        dns=args.dns,
+        log_format=args.log_format,
         proxy_auth=args.proxy_auth,
         allow_from=allow_from,
         stats_port=args.stats_port,
         max_threads=args.max_threads,
+        reload_sources=reload_sources,
     )
 
 

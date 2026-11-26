@@ -8,7 +8,7 @@ import pytest
 
 from impersonate_proxy.cert_manager import init_ca
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.server import is_client_allowed, proxy_auth_ok
+from impersonate_proxy.server import is_client_allowed, is_target_private, proxy_auth_ok
 from tests.helpers import FakeResponse as _FakeResponse
 from tests.helpers import read_http_response as _read_response
 from tests.helpers import start_proxy as _start_server
@@ -160,6 +160,59 @@ class TestAllowFromIntegration:
             with patch("impersonate_proxy.server.do_request", lambda *a, **k: _FakeResponse()):
                 status, _ = _raw_request(proxy_url, b"GET http://allowed.test/x HTTP/1.1\r\nHost: allowed.test\r\n\r\n")
             assert status == 200
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
+
+
+class TestBlockPrivateIPs:
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "127.0.0.1",
+            "10.0.0.1",
+            "172.16.5.4",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "224.0.0.1",
+            "::1",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+        ],
+    )
+    def test_private_ip_literals_blocked_when_enabled(self, target: str):
+        ctx = ProxyContext(ProxyConfig(block_private_ips=True))
+        assert is_target_private(ctx, target) is True
+        ctx_off = ProxyContext(ProxyConfig(block_private_ips=False))
+        assert is_target_private(ctx_off, target) is False
+
+    @pytest.mark.parametrize("target", ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"])
+    def test_public_ip_literals_allowed(self, target: str):
+        ctx = ProxyContext(ProxyConfig(block_private_ips=True))
+        assert is_target_private(ctx, target) is False
+
+    def test_hostname_resolving_to_private_ip_blocked(self):
+        ctx = ProxyContext(ProxyConfig(block_private_ips=True))
+        fake_addrinfo = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+        with patch("socket.getaddrinfo", return_value=fake_addrinfo):
+            assert is_target_private(ctx, "metadata.internal.example") is True
+
+        public_addrinfo = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+        with patch("socket.getaddrinfo", return_value=public_addrinfo):
+            assert is_target_private(ctx, "example.com") is False
+
+    def test_block_private_ips_rejects_connect_and_plain_http_with_403(self):
+        ctx = ProxyContext(ProxyConfig(block_private_ips=True))
+        server, proxy_url = _start_server(ctx)
+        try:
+            s1, _ = _raw_request(proxy_url, b"CONNECT 169.254.169.254:443 HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n")
+            assert s1 == 403
+            s2, _ = _raw_request(proxy_url, b"GET http://127.0.0.1:8080/secret HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            assert s2 == 403
         finally:
             server.shutdown()
             ctx.clear_session_pool()

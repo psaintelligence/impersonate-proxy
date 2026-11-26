@@ -56,7 +56,7 @@ For HTTPS requests, the proxy establishes a Man-in-the-Middle (MITM) state to in
 
 Under load (such as bursts of ~100 concurrent requests), initiating new `curl_cffi` sessions is resource-intensive due to easy handle allocation and TLS handshakes.
 
-- **Context Session Pool**: Each `ProxyContext` manages a queue-based `ctx.session_pool` containing reusable `curl_cffi` sessions (capped at 32 by default). Sessions are created with `discard_cookies=True` and `trust_env=False` so pooled handles never leak cookies between clients or loop through ambient proxy environment variables.
+- **Context Session Pool**: Each `ProxyContext` manages a queue-based `ctx.session_pool` containing reusable `curl_cffi` sessions (capped at 32 by default). Sessions are created with `discard_cookies=True`, `trust_env=False`, and a shared `CurlShare(connect=False, dns=True, ssl_session=True)` so pooled handles share DNS + TLS session resumption across threads without leaking cookies or looping through ambient proxy environment variables. Custom DNS servers or DNS-over-HTTPS (`--dns`) can be configured per instance.
 - **Upstream Keep-Alive**: Reusing sessions maintains active TCP connections to target hosts. Subsequent requests to the same target domain completely bypass DNS resolving and TCP/TLS handshake steps.
 - **Resource Leasing**: When a request starts, a session is leased from the pool. The proxy wraps the response's `close()` method so that the session is automatically returned to the pool only when the response stream has been fully consumed or closed by the client.
 - **Handler Thread Cap**: `--max-threads N` (env `IMPERSONATE_PROXY_MAX_THREADS`, default 0 = unlimited) bounds the concurrent handler threads with a semaphore; when the cap is reached the accept loop blocks and excess connections wait in the TCP listen backlog until a slot frees.
@@ -74,9 +74,12 @@ Inside a decrypted CONNECT tunnel, the proxy honors client-driven keep-alive: af
 
 The proxy caps the client request body it will buffer, per request: `--max-body-size` bytes (default 536870912 = 512 MiB, env `IMPERSONATE_PROXY_MAX_BODY_SIZE`). This applies to both `Content-Length` bodies and de-chunked `Transfer-Encoding: chunked` bodies on both the plain-HTTP and MITM paths. Requests exceeding the cap are rejected with `413 Payload Too Large` without buffering the body, and invalid/negative `Content-Length` values are rejected with `400`.
 
-### Target host deny list
+### Target host controls & SSRF protection
 
-`--block-host example.com,ads.example.net` (env `IMPERSONATE_PROXY_BLOCK_HOST`) refuses requests to listed hostnames with `403 Forbidden` — before any tunnel is established (CONNECT) or upstream request is issued (plain HTTP). Matching is case-insensitive and suffix-aware: an entry `example.com` blocks `example.com` itself and every `*.example.com` subdomain, but not `notexample.com`.
+- `--block-host example.com,ads.example.net` (env `IMPERSONATE_PROXY_BLOCK_HOST`) refuses requests to listed hostnames with `403 Forbidden` — before any tunnel is established (CONNECT) or upstream request is issued (plain HTTP). Matching is case-insensitive and suffix-aware: an entry `example.com` blocks `example.com` itself and every `*.example.com` subdomain, but not `notexample.com`.
+- `--raw-tunnel-host pinned.example.com` (env `IMPERSONATE_PROXY_RAW_TUNNEL_HOST`) bypasses MITM decryption on `CONNECT` and relays raw TCP bytes instead (useful for certificate-pinned apps or WebSocket endpoints), while still honoring `--allow-from`, `--proxy-auth`, `--block-host`, and `--block-private-ips`.
+- `--block-private-ips` (env `IMPERSONATE_PROXY_BLOCK_PRIVATE_IPS=true`) blocks requests targeting private, loopback, link-local (`169.254.169.254` cloud metadata), CGNAT, ULA, or multicast IP addresses (including hostnames resolving to them) with `403`.
+- `--block-host`, `--allow-from`, and `--raw-tunnel-host` accept `@/path/to/file` entries and reload live on `SIGHUP`.
 
 ---
 
@@ -116,7 +119,11 @@ to the same host as the proxy:
 | `impersonate_proxy_upstream_failures_total` | counter | Upstream requests that failed before producing a response (surfaced to the client as 502) |
 | `impersonate_proxy_client_status_total{status_class=...}` | counter | Client-facing responses with status ≥ 400, by class (`4xx`/`5xx`) — includes early rejects (400/403/407/413) |
 | `impersonate_proxy_session_pool_high_water` | gauge | Maximum concurrently leased `curl_cffi` sessions |
+| `impersonate_proxy_active_threads` | gauge | Handler threads currently serving client connections |
+| `impersonate_proxy_request_duration_seconds` | histogram | Upstream request handling latency in seconds |
 | `impersonate_proxy_cert_cache_size` | gauge | Host SSL contexts currently cached |
+
+Structured JSON logs can also be enabled with `--log-format json` (`IMPERSONATE_PROXY_LOG_FORMAT=json`).
 
 Counters are always active (negligible overhead); only the HTTP endpoint is
 gated behind the flag.
