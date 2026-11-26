@@ -11,7 +11,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Prefix with 'project-tests-' so reusable workflow_call invocations never
+  # share a concurrency group with their caller (github.workflow resolves to
+  # the caller's workflow name inside a reusable workflow).
+  group: project-tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
