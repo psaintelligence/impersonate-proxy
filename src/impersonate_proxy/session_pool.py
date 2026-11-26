@@ -121,10 +121,16 @@ def _issue_request(
 
     def custom_close() -> None:
         nonlocal session_released
-        orig_close()
-        if not session_released:
-            release_session(ctx, session)
-            session_released = True
+        healthy = True
+        try:
+            orig_close()
+        except Exception:
+            healthy = False
+            raise
+        finally:
+            if not session_released:
+                release_session(ctx, session, healthy=healthy)
+                session_released = True
 
     resp.close = custom_close
     return resp

@@ -4,13 +4,14 @@ import base64
 import contextlib
 import hmac
 import http.client
+import io
 import ipaddress
 import logging
 import select
 import socket
 import threading
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from typing import IO, TYPE_CHECKING, Any
@@ -114,6 +115,99 @@ def proxy_auth_ok(ctx: ProxyContext, auth_header: str | None) -> bool:
     return hmac.compare_digest(token.strip(), expected)
 
 
+def _get_header_ci(headers: Mapping[str, str], name: str) -> str | None:
+    """Case-insensitive lookup on a raw-cased header dict."""
+    target = name.lower()
+    for k, v in headers.items():
+        if k.lower() == target:
+            return v
+    return None
+
+
+def _collect_headers(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """Fold ``(name, value)`` header pairs into a dict, combining duplicates case-insensitively.
+
+    Preserves the first-seen casing of each header name. Repeated ``Cookie``
+    headers are joined with ``; `` (RFC 6265); all other repeated headers are
+    joined with ``, `` (RFC 9110).
+    """
+    out: dict[str, str] = {}
+    canonical: dict[str, str] = {}
+    for raw_k, raw_v in pairs:
+        k = raw_k.strip()
+        v = raw_v.strip()
+        kl = k.lower()
+        if kl in canonical:
+            key = canonical[kl]
+            sep = "; " if kl == "cookie" else ", "
+            out[key] = f"{out[key]}{sep}{v}"
+        else:
+            canonical[kl] = k
+            out[k] = v
+    return out
+
+
+def _is_bodyless_response(method: str, status_code: int) -> bool:
+    """Return True when RFC 9112 forbids a message body on this response."""
+    return method.upper() == "HEAD" or (100 <= status_code < 200) or status_code in (204, 304)
+
+
+def _read_request_body(rfile: IO[bytes] | io.BufferedIOBase, headers: Mapping[str, str], max_size: int) -> bytes | None:
+    """Read a client request body honoring ``max_size`` (chunked or Content-Length).
+
+    Rejects simultaneous ``Transfer-Encoding`` and ``Content-Length`` with
+    ``ValueError`` (RFC 9112 §6.3 anti-smuggling), invalid/negative
+    ``Content-Length`` with ``ValueError``, and bodies above ``max_size`` with
+    ``_BodyTooLargeError``.
+    """
+    te = _get_header_ci(headers, "transfer-encoding")
+    cl = _get_header_ci(headers, "content-length")
+    if te and cl:
+        raise ValueError("conflicting Transfer-Encoding and Content-Length headers")
+    if te and "chunked" in te.lower():
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            size_line = rfile.readline(8193)
+            if not size_line:
+                raise ConnectionError("client closed during chunked body")
+            try:
+                size = int(size_line.split(b";", 1)[0].strip() or b"", 16)
+            except ValueError as e:
+                raise ValueError("malformed chunked body") from e
+            if size < 0:
+                raise ValueError("negative chunk size")
+            if size == 0:
+                while True:  # consume optional trailers up to the blank line
+                    trailer = rfile.readline(8193)
+                    if trailer in (b"\r\n", b"\n", b""):
+                        break
+                return b"".join(chunks)
+            total += size
+            if total > max_size:
+                raise _BodyTooLargeError
+            data = rfile.read(size)
+            if len(data) < size:
+                raise ConnectionError("client closed during chunked body")
+            chunks.append(data)
+            rfile.readline(8193)  # CRLF after each chunk's data
+
+    if not cl:
+        return None
+    try:
+        length = int(cl)
+    except ValueError as e:
+        raise ValueError(f"invalid Content-Length: {cl[:64]}") from e
+    if length < 0:
+        raise ValueError(f"negative Content-Length: {length}")
+    if length > max_size:
+        raise _BodyTooLargeError
+    body = rfile.read(length)
+    if len(body) < length:
+        raise ConnectionError("client closed during body read")
+    return body
+
+
 def _wants_keep_alive(headers: dict[str, str], version: str) -> bool:
     """Return whether the client expects the connection to persist after this request.
 
@@ -122,8 +216,9 @@ def _wants_keep_alive(headers: dict[str, str], version: str) -> bool:
     ``Proxy-Connection``.
     """
     tokens: set[str] = set()
-    for name in ("Connection", "Proxy-Connection"):
-        tokens.update(t.strip().lower() for t in headers.get(name, "").split(",") if t.strip())
+    for name in ("connection", "proxy-connection"):
+        val = _get_header_ci(headers, name) or ""
+        tokens.update(t.strip().lower() for t in val.split(",") if t.strip())
     if version.upper() >= "HTTP/1.1":
         return "close" not in tokens
     return "keep-alive" in tokens
@@ -152,6 +247,17 @@ def _iter_response_headers(resp: "cffi_requests.Response") -> list[tuple[str, st
     return list(headers.items())
 
 
+def _is_loopback_client(client_ip: str) -> bool:
+    """Return True when client_ip is a loopback address (IPv4, IPv6, or IPv4-mapped)."""
+    try:
+        addr = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped.is_loopback
+    return addr.is_loopback
+
+
 def get_client_netblock(ip_str: str) -> str:
     """Return the /24 netblock for IPv4 or /64 netblock for IPv6."""
     try:
@@ -168,7 +274,7 @@ def raw_tunnel(ctx: ProxyContext, client_sock: socket.socket, host: str, port: i
     """Relay bytes between client and upstream without inspection."""
     logger.info(f"Establishing raw tunnel to: {ctx.show_identifying(f'{host}:{port}')}")
     try:
-        upstream = socket.create_connection((host, port), timeout=10)
+        upstream = socket.create_connection((host, port), timeout=ctx.config.connect_timeout)
     except Exception as e:
         logger.error(f"Raw tunnel connect failed for {ctx.show_identifying(f'{host}:{port}')}: {e}")
         return
@@ -222,7 +328,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             port = int(port_str) if port_str else 443
         except ValueError:
             logger.warning(f"CONNECT bad host:port: {self.ctx.show_identifying(self.path[:120])}")
-            self.send_error(400, "Bad host:port")
+            self._reject_client(400, "Bad host:port")
             return
 
         client_ip = self.client_address[0]
@@ -338,62 +444,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         path = parts[1]
         version = parts[2] if len(parts) > 2 else "HTTP/1.0"
 
-        headers: dict[str, str] = {}
+        raw_pairs: list[tuple[str, str]] = []
         while True:
             hline = rfile.readline(8193)
             if hline in (b"\r\n", b"\n", b""):
                 break
             if b":" in hline:
                 k, v = hline.decode("latin-1").split(":", 1)
-                headers[k.strip()] = v.strip()
+                raw_pairs.append((k, v))
 
-        body = self._read_mitm_body(rfile, headers)
+        headers = _collect_headers(raw_pairs)
+        body = _read_request_body(rfile, headers, self.ctx.config.max_body_size)
         return method, path, version, headers, body
-
-    def _read_mitm_body(self, rfile: IO[bytes], headers: dict[str, str]) -> bytes | None:
-        """Read the request body, honoring ``max_body_size`` (Content-Length or chunked)."""
-        max_size = self.ctx.config.max_body_size
-        if "chunked" in headers.get("Transfer-Encoding", "").lower():
-            chunks: list[bytes] = []
-            total = 0
-            while True:
-                size_line = rfile.readline(8193)
-                if not size_line:
-                    raise ConnectionError("client closed during chunked body")
-                try:
-                    size = int(size_line.split(b";", 1)[0].strip() or b"", 16)
-                except ValueError as e:
-                    raise ValueError("malformed chunked body") from e
-                if size == 0:
-                    while True:  # consume optional trailers up to the blank line
-                        trailer = rfile.readline(8193)
-                        if trailer in (b"\r\n", b"\n", b""):
-                            break
-                    return b"".join(chunks)
-                total += size
-                if total > max_size:
-                    raise _BodyTooLargeError
-                data = rfile.read(size)
-                if len(data) < size:
-                    raise ConnectionError("client closed during chunked body")
-                chunks.append(data)
-                rfile.readline(8193)  # CRLF after each chunk's data
-
-        cl = headers.get("Content-Length")
-        if not cl:
-            return None
-        try:
-            length = int(cl)
-        except ValueError as e:
-            raise ValueError(f"invalid Content-Length: {cl[:64]}") from e
-        if length < 0:
-            raise ValueError(f"negative Content-Length: {length}")
-        if length > max_size:
-            raise _BodyTooLargeError
-        body = rfile.read(length)
-        if len(body) < length:
-            raise ConnectionError("client closed during body read")
-        return body
 
     def _write_mitm_error(self, wfile: IO[bytes], code: int, reason: str) -> None:
         """Write a minimal error response inside the decrypted tunnel (closes the tunnel)."""
@@ -401,16 +463,28 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         wfile.flush()
         self.ctx.stats.record_status(code)
 
-    def _write_chunked_response(self, wfile: IO[bytes], resp: "cffi_requests.Response", keep_alive: bool) -> None:
-        """Stream an upstream response to the client as a chunked HTTP/1.1 message."""
+    def _write_mitm_response(
+        self, wfile: IO[bytes], method: str, resp: "cffi_requests.Response", keep_alive: bool
+    ) -> None:
+        """Write an upstream response to the MITM client (bodyless or chunked HTTP/1.1)."""
         skip_resp = {"transfer-encoding", "content-encoding", "content-length", "connection", "keep-alive"}
         status_code = resp.status_code
         reason = http.client.responses.get(status_code, "Unknown")
         wfile.write(f"HTTP/1.1 {status_code} {reason}\r\n".encode())
-        for k, v in _iter_response_headers(resp):
+        raw_resp_headers = _iter_response_headers(resp)
+        for k, v in raw_resp_headers:
             if k.lower() in skip_resp:
                 continue
             wfile.write(f"{k}: {v or ''}\r\n".encode())
+        if _is_bodyless_response(method, status_code):
+            if method.upper() == "HEAD" or status_code == 304:
+                cl = next((v for k, v in raw_resp_headers if k.lower() == "content-length" and v), None)
+                if cl:
+                    wfile.write(f"Content-Length: {cl}\r\n".encode())
+            wfile.write(b"Connection: keep-alive\r\n" if keep_alive else b"Connection: close\r\n")
+            wfile.write(b"\r\n")
+            wfile.flush()
+            return
         wfile.write(b"Transfer-Encoding: chunked\r\n")
         wfile.write(b"Connection: keep-alive\r\n" if keep_alive else b"Connection: close\r\n")
         wfile.write(b"\r\n")
@@ -449,7 +523,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             wfile.flush()
             return None
         try:
-            self._write_chunked_response(wfile, r, keep_alive)
+            self._write_mitm_response(wfile, method, r, keep_alive)
             self.ctx.stats.record_status(r.status_code)
             if (r.status_code >= 400 or self.ctx.config.debug) and not self.ctx.config.quiet:
                 logger.info(f"CONNECT-MITM {method} {self.ctx.show_identifying(url)} -> {r.status_code}")
@@ -457,8 +531,30 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         finally:
             r.close()
 
+    def _is_local_healthcheck_client(self, client_ip: str) -> bool:
+        """Return True when client_ip is local to this host (loopback or the bound interface IP)."""
+        if _is_loopback_client(client_ip):
+            return True
+        if isinstance(self.server, ThreadingHTTPServer):
+            bind_host = self.server.bind_host
+            return bind_host not in ("", "0.0.0.0", "::") and client_ip == bind_host
+        return False
+
     def _proxy(self) -> None:
         client_ip = self.client_address[0]
+        if self.path == "/healthz" and self.command in ("GET", "HEAD") and self._is_local_healthcheck_client(client_ip):
+            body = b"ok\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            if self.command == "GET":
+                self.wfile.write(body)
+            self.wfile.flush()
+            self.close_connection = True
+            return
+
         netblock = get_client_netblock(client_ip)
         if not is_client_allowed(self.ctx, client_ip):
             logger.warning(f"HTTP Proxy request from disallowed client: {netblock}")
@@ -466,7 +562,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
             return
 
         url = self.path
-        if not url.startswith("http"):
+        if not url.startswith(("http://", "https://")):
             logger.warning(f"HTTP Proxy bad request: {self.ctx.show_identifying(url)}")
             self._reject_client(400, "Absolute URL required")
             return
@@ -484,23 +580,23 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         if not self.ctx.config.quiet:
             logger.info(f"{self.command} request from {netblock} to {host}")
 
-        headers = {k: v for k, v in self.headers.items() if k.lower() not in _HOP_BY_HOP_HEADERS}
+        raw_headers = _collect_headers(self.headers.items())
+        try:
+            body = _read_request_body(self.rfile, raw_headers, self.ctx.config.max_body_size)
+        except _BodyTooLargeError:
+            logger.warning("HTTP Proxy: request body exceeds max_body_size; sending 413")
+            self._reject_client(413, "Payload Too Large")
+            return
+        except ValueError as e:
+            logger.warning(f"HTTP Proxy: malformed request body framing ({e}); sending 400")
+            self._reject_client(400, "Bad Request")
+            return
+        except ConnectionError as e:
+            logger.debug(f"HTTP Proxy client disconnected while sending body: {e}")
+            self.close_connection = True
+            return
 
-        body: bytes | None = None
-        content_length = self.headers.get("Content-Length")
-        if content_length:
-            try:
-                length = int(content_length)
-            except ValueError:
-                length = -1
-            if length < 0:
-                self._reject_client(400, "Invalid Content-Length")
-                return
-            if length > self.ctx.config.max_body_size:
-                logger.warning(f"HTTP Proxy: request body of {length} bytes exceeds max_body_size; sending 413")
-                self._reject_client(413, "Payload Too Large")
-                return
-            body = self.rfile.read(length)
+        headers = {k: v for k, v in raw_headers.items() if k.lower() not in _HOP_BY_HOP_HEADERS}
 
         logger.debug(
             f"HTTP Proxy proxying request: {self.command} {self.ctx.show_identifying(url)} (headers={sanitize_headers(headers)})"
@@ -517,16 +613,18 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         self.ctx.stats.record_status(resp.status_code)
 
         try:
-            is_head = self.command == "HEAD"
             skip_resp = {"transfer-encoding", "content-encoding", "content-length"}
-            resp_headers = [(k, v or "") for k, v in _iter_response_headers(resp) if k.lower() not in skip_resp]
-            if is_head:
+            raw_resp_headers = _iter_response_headers(resp)
+            resp_headers = [(k, v or "") for k, v in raw_resp_headers if k.lower() not in skip_resp]
+            if _is_bodyless_response(self.command, resp.status_code):
                 self.send_response(resp.status_code)
                 for key, val in resp_headers:
                     self.send_header(key, val)
-                cl = resp.headers.get("content-length")
-                if cl:
-                    self.send_header("Content-Length", cl)
+                if self.command == "HEAD" or resp.status_code == 304:
+                    cl = next((v for k, v in raw_resp_headers if k.lower() == "content-length" and v), None)
+                    if cl:
+                        self.send_header("Content-Length", cl)
+                self.send_header("Connection", "close")
                 self.end_headers()
             else:
                 self.send_response(resp.status_code)
@@ -556,6 +654,8 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
     do_GET = _proxy
     do_POST = _proxy
     do_PUT = _proxy
+    do_PATCH = _proxy
+    do_DELETE = _proxy
     do_HEAD = _proxy
     do_OPTIONS = _proxy
 
@@ -574,6 +674,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         self, server_address: tuple[str, int], RequestHandlerClass: type[BaseHTTPRequestHandler], ctx: ProxyContext
     ):
         self.ctx = ctx
+        self.bind_host: str = server_address[0]
         self._thread_slots: threading.BoundedSemaphore | None = (
             threading.BoundedSemaphore(ctx.config.max_threads) if ctx.config.max_threads > 0 else None
         )

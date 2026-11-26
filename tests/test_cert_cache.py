@@ -73,6 +73,32 @@ class TestCertCache:
         finally:
             ctx.host_cert_max = old_max
 
+    def test_cache_eviction_is_lru(self, ctx: ProxyContext):
+        """Touching a cached host promotes it so the least-recently-used host is evicted."""
+        ctx.host_cert_cache.clear()
+        old_max = ctx.host_cert_max
+        ctx.host_cert_max = 3
+        try:
+            get_cert_for_host(ctx, "hot.example.com")
+            get_cert_for_host(ctx, "cold.example.com")
+            get_cert_for_host(ctx, "warm.example.com")
+            # Touch hot.example.com so cold.example.com becomes the LRU entry.
+            get_cert_for_host(ctx, "hot.example.com")
+            get_cert_for_host(ctx, "new.example.com")
+            assert "hot.example.com" in ctx.host_cert_cache
+            assert "cold.example.com" not in ctx.host_cert_cache
+        finally:
+            ctx.host_cert_max = old_max
+
+    def test_expired_cert_entry_is_regenerated(self, ctx: ProxyContext):
+        """An expired cache entry must be replaced with a fresh SSLContext."""
+        ctx.host_cert_cache.clear()
+        ssl_ctx1 = get_cert_for_host(ctx, "expire.example.com")
+        # Backdate the entry's monotonic expiry so it is treated as expired.
+        ctx.host_cert_cache["expire.example.com"] = (ssl_ctx1, 0.0)
+        ssl_ctx2 = get_cert_for_host(ctx, "expire.example.com")
+        assert ssl_ctx2 is not ssl_ctx1
+
 
 class TestInitCaConcurrency:
     def test_concurrent_first_starts_yield_consistent_pair(self):
@@ -102,3 +128,19 @@ class TestInitCaConcurrency:
 
             # The claim file must be cleaned up.
             assert not os.path.exists(os.path.join(tmpdir, ".generate-claim"))
+
+    def test_reclaims_stale_generate_claim_after_crash(self):
+        """A stale .generate-claim file left by a killed process must be reclaimed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            claim_path = os.path.join(tmpdir, ".generate-claim")
+            with open(claim_path, "wb"):
+                pass
+            # Backdate mtime well past _CA_CLAIM_STALE_SECONDS.
+            stale_ts = os.path.getmtime(claim_path) - 120.0
+            os.utime(claim_path, (stale_ts, stale_ts))
+
+            ctx = ProxyContext(ProxyConfig())
+            init_ca(ctx, tmpdir)
+            assert ctx.ca_key is not None
+            assert ctx.ca_cert is not None
+            assert not os.path.exists(claim_path)

@@ -34,7 +34,8 @@ docker run --rm -p 8899:8899 \
 ```
 
 The container runs as a dedicated non-root user (`impersonate`) and ships a
-`HEALTHCHECK` that issues a plain-HTTP request through the local proxy.
+`HEALTHCHECK` that probes the proxy's local loopback `/healthz` endpoint (no
+external network calls).
 
 ### Docker Compose
 You can spin up the service in the background using docker-compose:

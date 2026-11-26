@@ -94,8 +94,7 @@ def render_metrics(snapshot: MetricsSnapshot) -> str:
             "# HELP impersonate_proxy_upstream_failures_total Upstream requests that failed before producing a response.",
             "# TYPE impersonate_proxy_upstream_failures_total counter",
             f"impersonate_proxy_upstream_failures_total {snapshot.upstream_failures}",
-            "# HELP impersonate_proxy_client_status_total Client-facing responses with status >= 400 by class,",
-            "# including early rejects (403/407/413) and 502 upstream failures.",
+            "# HELP impersonate_proxy_client_status_total Client-facing responses with status >= 400 by class (including early rejects and 502 upstream failures).",
             "# TYPE impersonate_proxy_client_status_total counter",
         ]
     )

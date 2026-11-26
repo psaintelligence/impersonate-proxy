@@ -139,8 +139,8 @@ def run(
         logger.info("Shutting down proxy server and clearing session pool...")
         server.server_close()
         if stats_server is not None:
-            stats_server.server_close()
             stats_server.shutdown()
+            stats_server.server_close()
         target_ctx.clear_session_pool()
 
 
@@ -263,10 +263,11 @@ def main() -> None:
         "auto-netblock, e.g. 192.168.1.7) or explicit CIDRs (e.g. 10.0.0.0/8); "
         "other clients are refused with 403. Or IMPERSONATE_PROXY_ALLOW_FROM",
     )
+    stats_port_env = os.environ.get("IMPERSONATE_PROXY_STATS_PORT", "").strip()
     parser.add_argument(
         "--stats-port",
         type=int,
-        default=os.environ.get("IMPERSONATE_PROXY_STATS_PORT"),
+        default=int(stats_port_env) if stats_port_env else None,
         help="Serve Prometheus metrics at /metrics on this port (off by default, or IMPERSONATE_PROXY_STATS_PORT)",
     )
     parser.add_argument(

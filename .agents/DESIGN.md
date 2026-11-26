@@ -25,7 +25,7 @@ The proxy operates in two primary modes depending on whether it receives plain H
    - Re-issues requests via `curl_cffi` to mimic browser TLS fingerprints.
 
 2. **HTTPS Proxy Mode (MITM)**:
-   - On startup, a root CA is initialized (via in-memory generation, with the CA certificate stored in `/tmp` and registered in the system trust store).
+   - On startup, a root CA is loaded or generated in `--ca-dir` (default `~/.config/impersonate-proxy`; clients trust `ca.crt` via `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`).
    - Upon receiving a `CONNECT` request, the proxy accepts the tunnel, dynamically generates a fake certificate signed by the Root CA for the requested domain (e.g. `example.com`), and performs a TLS handshake with the client.
    - The decrypted requests inside the secure tunnel are read, and the proxy forwards them using `curl_cffi` with browser TLS fingerprinting to the upstream server.
    - If the root CA fails to initialize or trust store installation fails, the proxy falls back to a raw TCP tunnel (relaying raw bytes back and forth) without TLS impersonation.

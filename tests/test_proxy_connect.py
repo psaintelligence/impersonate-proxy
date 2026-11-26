@@ -215,6 +215,111 @@ class TestConnectKeepAlive:
             "Set-Cookie: b=2; Path=/; HttpOnly",
         ]
 
+    def test_lowercase_headers_and_duplicate_cookies_in_mitm(self, mitm_proxy):
+        """Lowercase content-length/connection/transfer-encoding and duplicate Cookie
+        headers must be parsed case-insensitively inside the MITM tunnel."""
+        ctx, proxy_url, ca_dir = mitm_proxy
+        seen: list[tuple[dict[str, str], bytes | None]] = []
+
+        def fake_do_request(c, method, url, headers, body, allow_redirects=False):
+            seen.append((headers, body))
+            return _FakeResponse()
+
+        with patch("impersonate_proxy.server.do_request", fake_do_request):
+            tls = _open_tunnel(proxy_url, "lower.test", ca_dir)
+            try:
+                tls.sendall(
+                    b"POST /one HTTP/1.1\r\n"
+                    b"host: lower.test\r\n"
+                    b"cookie: a=1\r\n"
+                    b"cookie: b=2\r\n"
+                    b"content-length: 5\r\n"
+                    b"connection: close\r\n\r\n"
+                    b"hello"
+                )
+                status, _ = _read_response(tls)
+                eof = tls.recv(4096)
+            finally:
+                tls.close()
+        assert status == 200
+        assert eof == b""
+        assert seen == [({"cookie": "a=1; b=2", "content-length": "5"}, b"hello")]
+
+    def test_lowercase_chunked_and_conflicting_te_cl_rejected(self, mitm_proxy):
+        """Lowercase transfer-encoding: chunked is decoded; simultaneous TE+CL gets 400."""
+        ctx, proxy_url, ca_dir = mitm_proxy
+        seen: list[bytes | None] = []
+
+        def fake_do_request(c, method, url, headers, body, allow_redirects=False):
+            seen.append(body)
+            return _FakeResponse()
+
+        with patch("impersonate_proxy.server.do_request", fake_do_request):
+            tls = _open_tunnel(proxy_url, "chunked.test", ca_dir)
+            try:
+                tls.sendall(
+                    b"POST /chunk HTTP/1.1\r\n"
+                    b"host: chunked.test\r\n"
+                    b"transfer-encoding: chunked\r\n\r\n"
+                    b"3\r\nabc\r\n0\r\n\r\n"
+                )
+                s1, _ = _read_response(tls)
+                tls.sendall(
+                    b"POST /smuggle HTTP/1.1\r\n"
+                    b"host: chunked.test\r\n"
+                    b"transfer-encoding: chunked\r\n"
+                    b"content-length: 5\r\n\r\n"
+                    b"0\r\n\r\n"
+                )
+                s2, _ = _read_response(tls)
+            finally:
+                tls.close()
+        assert s1 == 200
+        assert seen == [b"abc"]
+        assert s2 == 400
+
+    def test_bodyless_responses_keep_alive_without_desync(self, mitm_proxy):
+        """HEAD, 204, and 304 responses must omit Transfer-Encoding: chunked and
+        the 0-chunk terminator so subsequent keep-alive requests do not desync."""
+        ctx, proxy_url, ca_dir = mitm_proxy
+        responses = [
+            _FakeResponse(status_code=200, body=b""),
+            _FakeResponse(status_code=204, body=b""),
+            _FakeResponse(status_code=304, body=b""),
+            _FakeResponse(status_code=200, body=b"after-bodyless"),
+        ]
+        responses[0].headers["Content-Length"] = "123"
+        it = iter(responses)
+
+        with patch("impersonate_proxy.server.do_request", lambda *a, **k: next(it)):
+            tls = _open_tunnel(proxy_url, "bodyless.test", ca_dir)
+            try:
+                tls.sendall(b"HEAD /h HTTP/1.1\r\nHost: bodyless.test\r\n\r\n")
+                head_raw = tls.recv(4096)
+                assert b"HTTP/1.1 200" in head_raw
+                assert b"Transfer-Encoding: chunked" not in head_raw
+                assert b"Content-Length: 123" in head_raw
+                assert head_raw.endswith(b"\r\n\r\n")
+
+                tls.sendall(b"DELETE /d HTTP/1.1\r\nHost: bodyless.test\r\n\r\n")
+                r204 = tls.recv(4096)
+                assert b"HTTP/1.1 204" in r204
+                assert b"Transfer-Encoding: chunked" not in r204
+                assert r204.endswith(b"\r\n\r\n")
+
+                tls.sendall(b"GET /cached HTTP/1.1\r\nHost: bodyless.test\r\n\r\n")
+                r304 = tls.recv(4096)
+                assert b"HTTP/1.1 304" in r304
+                assert b"Transfer-Encoding: chunked" not in r304
+                assert r304.endswith(b"\r\n\r\n")
+
+                # Subsequent normal GET on the same tunnel must parse cleanly (no desync).
+                tls.sendall(b"GET /final HTTP/1.1\r\nHost: bodyless.test\r\n\r\n")
+                status, body = _read_response(tls)
+            finally:
+                tls.close()
+        assert (status, body) == (200, b"after-bodyless")
+
 
 class TestMaxBodySize:
     def test_mitm_oversized_content_length_413(self, mitm_proxy):

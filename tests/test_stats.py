@@ -101,8 +101,8 @@ class TestMetricsEndpoint:
             other = requests.get(f"http://127.0.0.1:{port}/other", timeout=5)
             assert other.status_code == 404
         finally:
-            stats_server.server_close()
             stats_server.shutdown()
+            stats_server.server_close()
 
     def test_end_to_end_plain_http_counting(self):
         ctx = ProxyContext(ProxyConfig())
@@ -119,6 +119,6 @@ class TestMetricsEndpoint:
             assert 'impersonate_proxy_requests_total{mode="plain_http"} 1' in metrics
         finally:
             server.shutdown()
-            stats_server.server_close()
             stats_server.shutdown()
+            stats_server.server_close()
             ctx.clear_session_pool()

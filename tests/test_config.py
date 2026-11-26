@@ -490,6 +490,16 @@ def test_config_access_control_and_stats_flags():
         assert kwargs["allow_from"] == ("172.16.0.0/12",)
         assert kwargs["stats_port"] == 9200
 
+    # Empty IMPERSONATE_PROXY_STATS_PORT env var must resolve cleanly to None.
+    with (
+        patch("sys.argv", ["impersonate-proxy"]),
+        patch.dict(os.environ, {"IMPERSONATE_PROXY_STATS_PORT": ""}, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        mock_run.assert_called_once()
+        assert mock_run.call_args[1]["stats_port"] is None
+
 
 def test_config_max_threads():
     """Test --max-threads parsing (0 = unlimited) via CLI and env var."""

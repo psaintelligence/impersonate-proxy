@@ -37,6 +37,9 @@ jobs:
       - name: Lint and Format check
         run: uv run ruff check src tests && uv run ruff format --check src tests
 
+      - name: Type check
+        run: uv run basedpyright
+
       - name: Run tests
         run: uv run pytest tests/ -v
 

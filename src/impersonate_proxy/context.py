@@ -76,7 +76,7 @@ class ProxyContext:
         self.leaf_key: ec.EllipticCurvePrivateKey | None = None
 
         self.host_cert_max: int = host_cert_max
-        self.host_cert_cache: OrderedDict[str, ssl.SSLContext] = OrderedDict()
+        self.host_cert_cache: OrderedDict[str, tuple[ssl.SSLContext, float]] = OrderedDict()
         self.host_cert_lock: threading.Lock = threading.Lock()
 
         effective_pool_max = session_pool_max if session_pool_max is not None else self.config.session_pool_max

@@ -107,6 +107,20 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "42")
         self.end_headers()
 
+    def do_DELETE(self):
+        self.send_response(204)
+        self.end_headers()
+
+    def do_PATCH(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body_in = self.rfile.read(content_length)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        body = f"PATCH {self.path} body={body_in.decode()}".encode()
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
 
 def _get_free_port():
     with socket.socket() as s:
@@ -186,6 +200,38 @@ class TestProxyHTTP:
         assert resp.status_code == 200
         assert resp.text == ""
         assert resp.headers.get("Content-Length") == "42"
+
+    def test_proxy_delete_204_and_patch(self, proxy_server, upstream_server):
+        del_resp = requests.delete(f"{upstream_server}/item/1", proxies={"http": proxy_server})
+        assert del_resp.status_code == 204
+        assert del_resp.content == b""
+
+        patch_resp = requests.patch(f"{upstream_server}/item/1", data="delta", proxies={"http": proxy_server})
+        assert patch_resp.status_code == 200
+        assert patch_resp.text == "PATCH /item/1 body=delta"
+
+    def test_proxy_plain_http_chunked_request_body(self, proxy_server, upstream_server):
+        """Plain-HTTP proxy must decode incoming chunked request bodies and forward them."""
+        host, port = proxy_server.split("//")[1].split(":")
+        s = socket.create_connection((host, int(port)), timeout=10)
+        try:
+            s.sendall(
+                f"POST {upstream_server}/submit HTTP/1.1\r\n"
+                f"Host: 127.0.0.1\r\n"
+                f"Transfer-Encoding: chunked\r\n\r\n"
+                f"5\r\nhello\r\n6\r\n-chunk\r\n0\r\n\r\n".encode()
+            )
+            chunks = []
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+            raw = b"".join(chunks)
+        finally:
+            s.close()
+        assert b"200" in raw.split(b"\r\n", 1)[0]
+        assert b"POST /submit body=hello-chunk" in raw
 
     def test_proxy_preserves_upstream_headers(self, proxy_server, upstream_server):
         resp = requests.get(f"{upstream_server}/hello", proxies={"http": proxy_server})
@@ -442,3 +488,78 @@ class TestMaxThreads:
         finally:
             server.shutdown()
             ctx.clear_session_pool()
+
+
+class TestHealthcheck:
+    def test_local_healthz_get_and_head_bypass_auth_and_stats(self):
+        """Loopback GET/HEAD /healthz returns 200 ok even with auth/allowlist active,
+        without polluting request or error stats counters."""
+        ctx = ProxyContext(ProxyConfig(proxy_auth="alice:secret", allow_from=("10.0.0.0/8",)))
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        try:
+            r_get = requests.get(f"{proxy_url}/healthz", timeout=5)
+            assert r_get.status_code == 200
+            assert r_get.text == "ok\n"
+
+            r_head = requests.head(f"{proxy_url}/healthz", timeout=5)
+            assert r_head.status_code == 200
+            assert r_head.content == b""
+
+            snap = ctx.stats.snapshot(0)
+            assert snap.requests == {}
+            assert snap.status_classes == {}
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
+
+    def test_proxied_absolute_healthz_url_is_not_intercepted(self, proxy_server, upstream_server):
+        """An absolute proxied URL ending in /healthz must still be forwarded upstream."""
+        resp = requests.get(f"{upstream_server}/healthz", proxies={"http": proxy_server}, timeout=10)
+        assert resp.status_code == 200
+        assert resp.text == "GET /healthz"
+
+    def test_non_loopback_client_cannot_access_healthz(self):
+        """Remote clients must not see the local /healthz endpoint."""
+        from impersonate_proxy.server import _is_loopback_client
+
+        assert _is_loopback_client("127.0.0.1") is True
+        assert _is_loopback_client("::1") is True
+        assert _is_loopback_client("::ffff:127.0.0.1") is True
+        assert _is_loopback_client("10.0.0.5") is False
+        assert _is_loopback_client("203.0.113.10") is False
+        assert _is_loopback_client("not-an-ip") is False
+
+    def test_docker_healthcheck_script_succeeds_and_fails_cleanly(self):
+        """docker/healthcheck.py exits 0 against a live proxy and 1 against a closed port."""
+        import os
+        import subprocess
+        import sys
+
+        ctx = ProxyContext(ProxyConfig(proxy_auth="alice:secret", allow_from=("10.0.0.0/8",)))
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        port = proxy_url.rsplit(":", 1)[1]
+        env = dict(os.environ, IMPERSONATE_PROXY_HOST="0.0.0.0", IMPERSONATE_PROXY_PORT=port)
+        try:
+            res_ok = subprocess.run(
+                [sys.executable, "docker/healthcheck.py"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert res_ok.returncode == 0, res_ok.stderr
+        finally:
+            server.shutdown()
+            server.server_close()
+            ctx.clear_session_pool()
+
+        closed_env = dict(os.environ, IMPERSONATE_PROXY_HOST="127.0.0.1", IMPERSONATE_PROXY_PORT=str(_get_free_port()))
+        res_fail = subprocess.run(
+            [sys.executable, "docker/healthcheck.py"],
+            env=closed_env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert res_fail.returncode == 1
+        assert "healthcheck failed" in res_fail.stderr

@@ -53,6 +53,31 @@ class TestSessionManagement:
         release_session(ctx, s1)
         release_session(ctx, s2)
 
+    def test_custom_close_releases_and_discards_session_on_close_error(self):
+        """If resp.close() raises, custom_close must still release/discard the session
+        so leased-session counters never leak and broken handles are not pooled."""
+        from unittest.mock import MagicMock, patch
+
+        import pytest
+
+        from impersonate_proxy.session_pool import do_request
+
+        ctx = ProxyContext(ProxyConfig(session_pool_max=4))
+        fake_sess = MagicMock()
+        fake_resp = MagicMock()
+        fake_resp.close.side_effect = RuntimeError("close boom")
+        fake_sess.request.return_value = fake_resp
+
+        with patch("impersonate_proxy.session_pool.cffi_requests.Session", return_value=fake_sess):
+            resp = do_request(ctx, "GET", "http://example.com/", {}, None)
+            assert resp is fake_resp
+            assert ctx.stats._sessions_leased == 1
+            with pytest.raises(RuntimeError, match="close boom"):
+                resp.close()
+        assert ctx.stats._sessions_leased == 0
+        assert ctx.session_pool.empty()
+        fake_sess.close.assert_called_once()
+
 
 class TestRedactionUtilities:
     def test_show_identifying_redacts_by_default(self):

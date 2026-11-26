@@ -30,7 +30,7 @@ WORKDIR /app
 # Copy the compiled virtual environment from the builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Healthcheck script (plain-HTTP request through the local proxy)
+# Healthcheck script (local loopback /healthz probe, no external traffic)
 COPY --chmod=0644 docker/healthcheck.py /app/healthcheck.py
 
 # Add virtual environment bin directory to PATH
@@ -55,8 +55,8 @@ EXPOSE 8899
 # Persistent volume for CA files
 VOLUME ["/home/impersonate/.config/impersonate-proxy"]
 
-# Verify the proxy actually forwards a request (any HTTP response counts)
-HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=3 \
+# Verify the proxy listener and handler threads are serving local /healthz probes
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD ["python", "/app/healthcheck.py"]
 
 USER impersonate

@@ -7,6 +7,7 @@ import logging
 import os
 import ssl
 import tempfile
+import threading
 import time
 
 from cryptography import x509
@@ -21,6 +22,13 @@ logger: logging.Logger = logging.getLogger("impersonate-proxy")
 # How long a losing concurrent initializer waits for the winner to publish
 # its CA files before giving up (MITM then falls back to raw tunnels).
 _CA_PUBLISH_TIMEOUT: float = 10.0
+# Age after which a leftover .generate-claim file (e.g. from a SIGKILL crash)
+# is considered stale and safe to reclaim.
+_CA_CLAIM_STALE_SECONDS: float = 30.0
+# Leaf certificates are valid for 30 days; refresh cached SSLContexts 1 day
+# before expiry so long-running proxies never serve expired certs.
+_LEAF_CERT_LIFETIME_DAYS: int = 30
+_LEAF_CERT_CACHE_TTL: float = (_LEAF_CERT_LIFETIME_DAYS - 1) * 86400.0
 
 
 def _load_ca_files(ctx: ProxyContext, key_path: str, cert_path: str) -> bool:
@@ -47,7 +55,7 @@ def _load_ca_files(ctx: ProxyContext, key_path: str, cert_path: str) -> bool:
 
 def _publish_atomic(path: str, payload: bytes, mode: int) -> None:
     """Write payload to a temp file in the same directory, then os.replace it."""
-    tmp_path = f"{path}.tmp.{os.getpid()}"
+    tmp_path = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
     fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
         with os.fdopen(fd, "wb") as f:
@@ -90,12 +98,30 @@ def init_ca(ctx: ProxyContext, ca_dir: str | None = None) -> None:
             return
         # Torn or mismatched pair on disk: fall through and regenerate.
 
-        # Elect a single generator for this ca_dir.
+        # Elect a single generator for this ca_dir, reclaiming a stale claim
+        # left behind if a previous process crashed mid-generation.
         claim_fd: int | None = None
-        try:
-            claim_fd = os.open(claim_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            claim_fd = None
+        for attempt in range(2):
+            try:
+                claim_fd = os.open(claim_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                break
+            except FileExistsError:
+                claim_fd = None
+                if attempt == 0:
+                    try:
+                        age = time.time() - os.stat(claim_path).st_mtime
+                    except OSError:
+                        continue
+                    if age > _CA_CLAIM_STALE_SECONDS:
+                        logger.warning(
+                            "Reclaiming stale CA generation claim in %s (age=%.1fs)",
+                            ctx.show_identifying(ca_dir),
+                            age,
+                        )
+                        with contextlib.suppress(OSError):
+                            os.unlink(claim_path)
+                        continue
+                break
 
         if claim_fd is not None:
             try:
@@ -171,21 +197,27 @@ def _generate_and_publish_ca(ctx: ProxyContext, key_path: str, cert_path: str) -
 
 
 def get_cert_for_host(ctx: ProxyContext, hostname: str) -> ssl.SSLContext:
-    """Get or create a cached SSL context for the given hostname."""
+    """Get or create a cached SSL context for the given hostname (LRU with expiry)."""
+    now = time.monotonic()
     with ctx.host_cert_lock:
-        ssl_ctx = ctx.host_cert_cache.get(hostname)
-        if ssl_ctx is not None:
-            logger.debug(f"SSLContext cache hit for: {ctx.show_identifying(hostname)}")
-            return ssl_ctx
+        entry = ctx.host_cert_cache.get(hostname)
+        if entry is not None:
+            ssl_ctx, expires_at = entry
+            if now < expires_at:
+                ctx.host_cert_cache.move_to_end(hostname)
+                logger.debug(f"SSLContext cache hit for: {ctx.show_identifying(hostname)}")
+                return ssl_ctx
+            del ctx.host_cert_cache[hostname]
+            logger.debug(f"SSLContext cache entry expired for: {ctx.show_identifying(hostname)}")
+        if ctx.leaf_key is None:
+            ctx.leaf_key = ec.generate_private_key(ec.SECP256R1())
+        key = ctx.leaf_key
 
     try:
         san = x509.IPAddress(ipaddress.ip_address(hostname))
     except ValueError:
         san = x509.DNSName(hostname)
 
-    if ctx.leaf_key is None:
-        ctx.leaf_key = ec.generate_private_key(ec.SECP256R1())
-    key = ctx.leaf_key
     logger.debug(f"Generating dynamic host certificate for: {ctx.show_identifying(hostname)}")
     cn = hostname[:64] if len(hostname) > 64 else hostname
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
@@ -196,7 +228,7 @@ def get_cert_for_host(ctx: ProxyContext, hostname: str) -> ssl.SSLContext:
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.UTC))
-        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=30))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=_LEAF_CERT_LIFETIME_DAYS))
         .add_extension(
             x509.SubjectAlternativeName([san]),
             critical=False,
@@ -251,11 +283,14 @@ def get_cert_for_host(ctx: ProxyContext, hostname: str) -> ssl.SSLContext:
             with contextlib.suppress(OSError):
                 os.unlink(pem_file)
 
+    store_now = time.monotonic()
     with ctx.host_cert_lock:
         existing = ctx.host_cert_cache.get(hostname)
-        if existing is not None:
-            return existing
-        ctx.host_cert_cache[hostname] = ssl_ctx
+        if existing is not None and store_now < existing[1]:
+            ctx.host_cert_cache.move_to_end(hostname)
+            return existing[0]
+        ctx.host_cert_cache[hostname] = (ssl_ctx, store_now + _LEAF_CERT_CACHE_TTL)
+        ctx.host_cert_cache.move_to_end(hostname)
         while len(ctx.host_cert_cache) > ctx.host_cert_max:
             evicted, _ = ctx.host_cert_cache.popitem(last=False)
             logger.debug(f"Evicted host from certificate cache: {ctx.show_identifying(evicted)}")
