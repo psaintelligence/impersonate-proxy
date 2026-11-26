@@ -1,14 +1,15 @@
 """Unit tests for the request statistics counters and the Prometheus metrics endpoint."""
 
-import threading
 from unittest.mock import patch
 
 import requests
 
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
 from impersonate_proxy.stats import ProxyStats, render_metrics, start_stats_server
-from tests.test_proxy_connect import _FakeResponse, _get_free_port, _wait_ready
+from tests.helpers import FakeResponse as _FakeResponse
+from tests.helpers import get_free_port as _get_free_port
+from tests.helpers import start_proxy as _start_proxy
+from tests.helpers import wait_ready as _wait_ready
 
 
 class TestProxyStatsCounters:
@@ -72,15 +73,6 @@ class TestRenderMetrics:
         assert "impersonate_proxy_session_pool_high_water 1" in text
         assert "impersonate_proxy_cert_cache_size 7" in text
         assert text.endswith("\n")
-
-
-def _start_proxy(ctx: ProxyContext):
-    port = _get_free_port()
-    server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    _wait_ready(port)
-    return server, f"http://127.0.0.1:{port}"
 
 
 class TestMetricsEndpoint:

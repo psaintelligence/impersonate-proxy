@@ -2,26 +2,18 @@
 
 import base64
 import socket
-import threading
 from unittest.mock import patch
 
 import pytest
 
 from impersonate_proxy.cert_manager import init_ca
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class, is_client_allowed, proxy_auth_ok
-from tests.test_proxy_connect import _FakeResponse, _get_free_port, _read_response, _wait_ready
+from impersonate_proxy.server import is_client_allowed, proxy_auth_ok
+from tests.helpers import FakeResponse as _FakeResponse
+from tests.helpers import read_http_response as _read_response
+from tests.helpers import start_proxy as _start_server
 
 _AUTH_TOKEN = base64.b64encode(b"user:secret").decode()
-
-
-def _start_server(ctx: ProxyContext):
-    port = _get_free_port()
-    server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    _wait_ready(port)
-    return server, f"http://127.0.0.1:{port}"
 
 
 def _raw_request(proxy_url: str, payload: bytes) -> tuple[int, bytes]:

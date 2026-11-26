@@ -4,47 +4,15 @@ import os
 import socket
 import ssl
 import tempfile
-import threading
-import time
 from unittest.mock import patch
 
 import pytest
 
 from impersonate_proxy.cert_manager import init_ca
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
-
-
-class _FakeResponse:
-    """Minimal stand-in for a curl_cffi Response."""
-
-    def __init__(self, status_code: int = 200, body: bytes = b"resp-body"):
-        self.status_code = status_code
-        self.headers = {"Content-Type": "text/plain"}
-        self._body = body
-
-    def iter_content(self):
-        yield self._body
-
-    def close(self) -> None:
-        pass
-
-
-def _get_free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _wait_ready(port: int) -> None:
-    for _ in range(50):
-        try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-            s.close()
-            return
-        except OSError:
-            time.sleep(0.1)
-    raise RuntimeError("proxy never became ready")
+from tests.helpers import FakeResponse as _FakeResponse
+from tests.helpers import read_http_response as _read_response
+from tests.helpers import start_proxy
 
 
 @pytest.fixture()
@@ -53,46 +21,10 @@ def mitm_proxy():
     with tempfile.TemporaryDirectory() as ca_dir:
         ctx = ProxyContext(ProxyConfig(ca_dir=ca_dir))
         init_ca(ctx, ca_dir)
-        port = _get_free_port()
-        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        _wait_ready(port)
-        yield ctx, f"http://127.0.0.1:{port}", ca_dir
+        server, proxy_url = start_proxy(ctx)
+        yield ctx, proxy_url, ca_dir
         server.shutdown()
         ctx.clear_session_pool()
-
-
-def _read_response(sock) -> tuple[int, bytes]:
-    """Read one HTTP response (chunked or Content-Length framed) from the socket."""
-    buf = b""
-    while b"\r\n\r\n" not in buf:
-        chunk = sock.recv(4096)
-        if not chunk:
-            raise ConnectionError("connection closed before response headers")
-        buf += chunk
-    head, _, stream = buf.partition(b"\r\n\r\n")
-    status = int(head.split(b" ", 2)[1])
-    head_lower = head.lower()
-    body = b""
-    if b"transfer-encoding: chunked" in head_lower:
-        while True:
-            while b"\r\n" not in stream:
-                stream += sock.recv(4096)
-            size_line, _, stream = stream.partition(b"\r\n")
-            size = int(size_line.split(b";")[0], 16)
-            if size == 0:
-                break
-            while len(stream) < size + 2:
-                stream += sock.recv(4096)
-            body += stream[:size]
-            stream = stream[size + 2 :]
-    elif b"content-length:" in head_lower:
-        cl = int(head.split(b"Content-Length: ", 1)[1].split(b"\r\n", 1)[0])
-        while len(stream) < cl:
-            stream += sock.recv(4096)
-        body = stream[:cl]
-    return status, body
 
 
 def _open_tunnel(proxy_url: str, host: str, ca_dir: str) -> ssl.SSLSocket:
@@ -390,11 +322,8 @@ class TestMaxBodySize:
 class TestHostBlocking:
     def test_connect_blocked_host_403(self):
         ctx = ProxyContext(ProxyConfig(block_hosts=("blocked.test",)))
-        port = _get_free_port()
-        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        _wait_ready(port)
+        server, proxy_url = start_proxy(ctx)
+        port = int(proxy_url.rsplit(":", 1)[1])
         try:
             raw = socket.create_connection(("127.0.0.1", port), timeout=10)
             raw.sendall(b"CONNECT blocked.test:443 HTTP/1.1\r\nHost: blocked.test\r\n\r\n")
@@ -407,11 +336,8 @@ class TestHostBlocking:
 
     def test_plain_http_blocked_host_403_and_allowed_200(self):
         ctx = ProxyContext(ProxyConfig(block_hosts=("blocked.test",)))
-        port = _get_free_port()
-        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        _wait_ready(port)
+        server, proxy_url = start_proxy(ctx)
+        port = int(proxy_url.rsplit(":", 1)[1])
         try:
             with patch("impersonate_proxy.server.do_request", lambda *a, **k: _FakeResponse()):
                 raw = socket.create_connection(("127.0.0.1", port), timeout=10)
@@ -431,11 +357,8 @@ class TestHostBlocking:
 
     def test_subdomain_of_blocked_host_rejected(self):
         ctx = ProxyContext(ProxyConfig(block_hosts=("blocked.test",)))
-        port = _get_free_port()
-        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        _wait_ready(port)
+        server, proxy_url = start_proxy(ctx)
+        port = int(proxy_url.rsplit(":", 1)[1])
         try:
             raw = socket.create_connection(("127.0.0.1", port), timeout=10)
             raw.sendall(b"CONNECT sub.blocked.test:443 HTTP/1.1\r\nHost: sub.blocked.test\r\n\r\n")
@@ -452,17 +375,14 @@ class TestRawTunnelFallback:
         """Without a CA the tunnel must still relay bytes (no impersonation)."""
         ctx = ProxyContext(ProxyConfig(ca_dir=None))
         ctx.ca_key = None
-        port = _get_free_port()
 
         upstream = socket.socket()
         upstream.bind(("127.0.0.1", 0))
         upstream.listen(1)
         upstream_port = upstream.getsockname()[1]
 
-        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        _wait_ready(port)
+        server, proxy_url = start_proxy(ctx)
+        port = int(proxy_url.rsplit(":", 1)[1])
         try:
             raw = socket.create_connection(("127.0.0.1", port), timeout=10)
             raw.sendall(f"CONNECT 127.0.0.1:{upstream_port} HTTP/1.1\r\nHost: x\r\n\r\n".encode())

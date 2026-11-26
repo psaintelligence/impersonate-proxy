@@ -67,16 +67,16 @@ benchmark:
 
 # Run linting checks
 lint:
-	$(UV) run --extra dev ruff check src tests
+	$(UV) run --extra dev ruff check src tests docker
 
 # Format code
 format:
-	$(UV) run --extra dev ruff format src tests
+	$(UV) run --extra dev ruff format src tests docker
 
 # Auto-fix linting and formatting issues
 lint-fix:
-	$(UV) run --extra dev ruff check --fix src tests
-	$(UV) run --extra dev ruff format src tests
+	$(UV) run --extra dev ruff check --fix src tests docker
+	$(UV) run --extra dev ruff format src tests docker
 
 # Run type checking
 typecheck:

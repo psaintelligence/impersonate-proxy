@@ -47,8 +47,8 @@ For HTTPS requests, the proxy establishes a Man-in-the-Middle (MITM) state to in
 1. **Root CA Generation**: At startup, if no CA files are found, the proxy creates a root CA private key and self-signed certificate using fast **ECDSA SECP256R1 (P-256)** keys.
 2. **Leaf Certificate Issuance**:
     - For each requested domain, the proxy generates a leaf certificate signed by the root CA.
-    - **Optimization**: To avoid CPU bottleneck during RSA key creation, the proxy generates an ECDSA P-256 leaf certificate and reuses a single static leaf key (`_LEAF_KEY`) globally across all generated certs. This reduces leaf cert generation times to `<1ms`.
-3. **Certificate Caching**: Generated `ssl.SSLContext` structures are stored in a thread-safe cache (`_HOST_CERT_CACHE`). If the cache grows beyond 256 hosts, the least recently used (LRU) context is evicted automatically.
+    - **Optimization**: To avoid CPU bottleneck during RSA key creation, the proxy generates an ECDSA P-256 leaf certificate and reuses a single static leaf key (`ctx.leaf_key`) per proxy context across all generated certs. This reduces leaf cert generation times to `<1ms`.
+3. **Certificate Caching**: Generated `ssl.SSLContext` structures are stored in a thread-safe LRU cache (`ctx.host_cert_cache`) with pre-expiry refresh (29-day TTL for 30-day leaf certs). If the cache grows beyond 256 hosts, the least recently used (LRU) context is evicted automatically.
 
 ---
 
@@ -56,7 +56,7 @@ For HTTPS requests, the proxy establishes a Man-in-the-Middle (MITM) state to in
 
 Under load (such as bursts of ~100 concurrent requests), initiating new `curl_cffi` sessions is resource-intensive due to easy handle allocation and TLS handshakes.
 
-- **Global Session Pool**: The proxy manages a queue-based `_SESSION_POOL` containing reusable `curl_cffi` sessions (capped at 32).
+- **Context Session Pool**: Each `ProxyContext` manages a queue-based `ctx.session_pool` containing reusable `curl_cffi` sessions (capped at 32 by default). Sessions are created with `discard_cookies=True` and `trust_env=False` so pooled handles never leak cookies between clients or loop through ambient proxy environment variables.
 - **Upstream Keep-Alive**: Reusing sessions maintains active TCP connections to target hosts. Subsequent requests to the same target domain completely bypass DNS resolving and TCP/TLS handshake steps.
 - **Resource Leasing**: When a request starts, a session is leased from the pool. The proxy wraps the response's `close()` method so that the session is automatically returned to the pool only when the response stream has been fully consumed or closed by the client.
 - **Handler Thread Cap**: `--max-threads N` (env `IMPERSONATE_PROXY_MAX_THREADS`, default 0 = unlimited) bounds the concurrent handler threads with a semaphore; when the cap is reached the accept loop blocks and excess connections wait in the TCP listen backlog until a slot frees.
@@ -169,9 +169,9 @@ curl_cffi (with `default_headers=True`, the project's default) automatically inj
 
 **Critical behaviour**: client-supplied headers OVERRIDE curl_cffi's defaults. So forwarding a client's `Accept: */*` or `Accept-Encoding: gzip, deflate` *silently breaks* impersonation — curl_cffi cannot fix it.
 
-`_cffi_defaults_headers()` therefore:
+`cffi_defaults_headers()` therefore:
 
-1. **Strips** browser-shape headers the client should not own (`User-Agent`, `Sec-Ch-Ua`, `Sec-Ch-Ua-Mobile`, `Sec-Ch-Ua-Platform`, `Accept-Encoding`, `Upgrade-Insecure-Requests`, `Sec-Fetch-User`, `Priority`, `TE`) so curl_cffi's profile defaults shine through.
+1. **Strips** browser-shape headers the client should not own (`User-Agent`, the full `Sec-Ch-Ua*` family, `Accept-Encoding`, `Upgrade-Insecure-Requests`, `Sec-Fetch-User`, `Priority`, `TE`) so curl_cffi's profile defaults and curated fingerprints shine through.
 2. **Drops** bot-tell headers (`Cache-Control`, `DNT`, `Connection` — the last with a warning because curl_cffi manages HTTP/2 connection state itself).
 3. **Strips** `Accept-Language` only when the client sent the literal `*` (a bot tell); real values like `en-US,en;q=0.9` are preserved.
 4. **Preserves** everything else: request-specific headers (`Host`, `Cookie`, `Authorization`, `Referer`, `Origin`, `Content-Type`, `Content-Length`, `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`, `Range`) and shape-dependent headers curl_cffi cannot infer — `Accept` (nav vs XHR), `Sec-Fetch-Dest/Mode/Site`. A non-browser XHR client (e.g. httpx) correctly sends `Sec-Fetch-Mode: cors` on its XHR requests; preserving it keeps the request XHR-shaped. Forcing curl_cffi's nav-style defaults onto an XHR request would itself be a bot tell.

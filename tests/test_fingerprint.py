@@ -226,38 +226,19 @@ class TestFingerprintThroughProxy:
     @pytest.mark.live
     def test_reflected_headers_are_coherent(self):
         import os
-        import socket
         import tempfile
-        import threading
-        import time
 
         import requests
 
         from impersonate_proxy.cert_manager import init_ca
         from impersonate_proxy.context import ProxyConfig, ProxyContext
-        from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
+        from tests.helpers import start_proxy
 
-        def _free_port():
-            with socket.socket() as s:
-                s.bind(("127.0.0.1", 0))
-                return s.getsockname()[1]
-
-        port = _free_port()
-        proxy_url = f"http://127.0.0.1:{port}"
         with tempfile.TemporaryDirectory() as tmpdir:
             ctx = ProxyContext(ProxyConfig(ca_dir=tmpdir))
             init_ca(ctx, tmpdir)
             ca_cert = os.path.join(tmpdir, "ca.crt")
-            server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            for _ in range(50):
-                try:
-                    sock = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-                    sock.close()
-                    break
-                except OSError:
-                    time.sleep(0.1)
+            server, proxy_url = start_proxy(ctx)
             try:
                 resp = requests.get(
                     "https://whoami.projects.psaintelligence.com/",
@@ -288,38 +269,20 @@ class TestFingerprintThroughProxy:
         tls.peet.ws which reports the true on-the-wire HTTP/2 HEADERS frame.
         """
         import os
-        import socket
         import tempfile
-        import threading
         import time
 
         import requests
 
         from impersonate_proxy.cert_manager import init_ca
         from impersonate_proxy.context import ProxyConfig, ProxyContext
-        from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
+        from tests.helpers import start_proxy
 
-        def _free_port():
-            with socket.socket() as s:
-                s.bind(("127.0.0.1", 0))
-                return s.getsockname()[1]
-
-        port = _free_port()
-        proxy_url = f"http://127.0.0.1:{port}"
         with tempfile.TemporaryDirectory() as tmpdir:
             ctx = ProxyContext(ProxyConfig(ca_dir=tmpdir))
             init_ca(ctx, tmpdir)
             ca_cert = os.path.join(tmpdir, "ca.crt")
-            server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            for _ in range(50):
-                try:
-                    sock = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-                    sock.close()
-                    break
-                except OSError:
-                    time.sleep(0.1)
+            server, proxy_url = start_proxy(ctx)
             try:
                 data = None
                 for attempt in range(3):

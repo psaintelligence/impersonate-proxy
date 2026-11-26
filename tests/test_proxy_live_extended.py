@@ -17,12 +17,9 @@ Run with:
 NOT run by default, NOT run in CI, NOT included in 'pytest -m live'.
 """
 
-import contextlib
 import logging
 import re
-import socket
 import tempfile
-import threading
 import time
 from collections.abc import Generator
 
@@ -31,19 +28,13 @@ import requests
 
 from impersonate_proxy.cert_manager import init_ca
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
+from tests.helpers import start_proxy
 
 logger = logging.getLogger("impersonate-proxy-test")
 
 # ---------------------------------------------------------------------------
 # Shared fixtures and helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 @pytest.fixture(
@@ -75,9 +66,6 @@ def proxy_server(request) -> Generator[tuple[str, str, str, str, bool], None, No
     """
     impersonate_profile, header_mode, strip_leak = request.param
 
-    port = _get_free_port()
-    proxy_url = f"http://127.0.0.1:{port}"
-
     with tempfile.TemporaryDirectory() as tmpdir:
         ctx = ProxyContext(
             ProxyConfig(
@@ -89,18 +77,7 @@ def proxy_server(request) -> Generator[tuple[str, str, str, str, bool], None, No
         )
         init_ca(ctx, tmpdir)
         ca_cert_path = f"{tmpdir}/ca.crt"
-
-        server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-
-        # Wait for the server to accept connections
-        for _ in range(50):
-            with contextlib.suppress(OSError):
-                s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-                s.close()
-                break
-            time.sleep(0.1)
+        server, proxy_url = start_proxy(ctx)
 
         try:
             yield proxy_url, ca_cert_path, impersonate_profile, header_mode, strip_leak
@@ -201,33 +178,10 @@ def _get_with_retry(
     raise last_exc
 
 
-def _get_unproxied(url: str, use_chrome_headers: bool = False, timeout: int = 15) -> int:
+def _get_unproxied(url: str, timeout: int = 15) -> int:
     """Issue a GET request directly (without proxy) and return the status code."""
-    headers = None
-    if use_chrome_headers:
-        # Mirrors impersonate-proxy's chrome profile defaults (Chrome 146 on macOS,
-        # sourced from curl-impersonate signatures).
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,"
-                "image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Ch-Ua": '"Chromium";v="146", "Google Chrome";v="146", "Not_A Brand";v="99"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"macOS"',
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Priority": "u=0, i",
-        }
     try:
-        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp = requests.get(url, timeout=timeout)
         return resp.status_code
     except Exception:
         return 0
@@ -294,7 +248,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.cloudflare.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -306,7 +260,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.akamai.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -318,7 +272,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://datadome.co"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -330,7 +284,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.imperva.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -342,7 +296,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.linkedin.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -354,7 +308,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.ticketmaster.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -366,7 +320,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.google.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -412,7 +366,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://bot.sannysoft.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -424,7 +378,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://www.bet365.com"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
@@ -434,7 +388,7 @@ class TestFingerprintBypass:
         proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
         url = "https://abrahamjuliot.github.io/creepjs"
 
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
+        unproxied_status = _get_unproxied(url)
         resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
 
         _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)

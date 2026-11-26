@@ -11,7 +11,9 @@ import pytest
 import requests
 
 from impersonate_proxy.context import ProxyConfig, ProxyContext
-from impersonate_proxy.server import ThreadingHTTPServer, create_handler_class
+from tests.helpers import get_free_port as _get_free_port
+from tests.helpers import start_proxy as _start_proxy_with_ctx
+from tests.helpers import wait_ready as _wait_ready
 
 _UPSTREAM_ACTIVE = 0
 _UPSTREAM_PEAK = 0
@@ -122,12 +124,6 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def _get_free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture(scope="module")
 def upstream_server():
     """Start a mock upstream HTTP server."""
@@ -135,15 +131,7 @@ def upstream_server():
     server = _ThreadingUpstream(("127.0.0.1", port), MockUpstreamHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    for _ in range(50):
-        try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-            s.close()
-            break
-        except OSError:
-            time.sleep(0.1)
-    else:
-        raise RuntimeError("upstream server never became ready")
+    _wait_ready(port)
     yield f"http://127.0.0.1:{port}"
     server.shutdown()
 
@@ -157,23 +145,7 @@ def proxy_ctx():
 @pytest.fixture(scope="module")
 def proxy_server(proxy_ctx):
     """Start the TLS impersonate proxy bound to a dedicated ProxyContext."""
-    port = _get_free_port()
-    proxy_url = f"http://127.0.0.1:{port}"
-
-    server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(proxy_ctx), proxy_ctx)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-
-    for _ in range(50):
-        try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-            s.close()
-            break
-        except OSError:
-            time.sleep(0.1)
-    else:
-        raise RuntimeError("proxy server never became ready")
-
+    server, proxy_url = _start_proxy_with_ctx(proxy_ctx)
     yield proxy_url
     server.shutdown()
     proxy_ctx.clear_session_pool()
@@ -433,23 +405,6 @@ class TestProxyHTTP:
         finally:
             server.shutdown()
             ctx.clear_session_pool()
-
-
-def _start_proxy_with_ctx(ctx: ProxyContext) -> tuple[ThreadingHTTPServer, str]:
-    port = _get_free_port()
-    server = ThreadingHTTPServer(("127.0.0.1", port), create_handler_class(ctx), ctx)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    for _ in range(50):
-        try:
-            s = socket.create_connection(("127.0.0.1", port), timeout=0.1)
-            s.close()
-            break
-        except OSError:
-            time.sleep(0.1)
-    else:
-        raise RuntimeError("proxy server never became ready")
-    return server, f"http://127.0.0.1:{port}"
 
 
 class TestMaxThreads:
