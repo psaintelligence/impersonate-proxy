@@ -124,13 +124,22 @@ def init_ca(ctx: ProxyContext, ca_dir: str | None = None) -> None:
                 break
 
         if claim_fd is not None:
+            generated = False
             try:
-                _generate_and_publish_ca(ctx, key_path, cert_path)
+                # Double-check after acquiring the exclusive claim: another process/thread
+                # may have finished publishing and unlinked the claim between our fast-path
+                # check and acquiring claim_fd.
+                if not _load_ca_files(ctx, key_path, cert_path):
+                    _generate_and_publish_ca(ctx, key_path, cert_path)
+                    generated = True
             finally:
                 os.close(claim_fd)
                 with contextlib.suppress(OSError):
                     os.unlink(claim_path)
-            logger.info(f"Generated and saved new CA key and certificate in {ctx.show_identifying(ca_dir)}")
+            if generated:
+                logger.info(f"Generated and saved new CA key and certificate in {ctx.show_identifying(ca_dir)}")
+            else:
+                logger.info(f"Loaded existing CA key and certificate from {ctx.show_identifying(ca_dir)}")
             return
 
         # Losing initializer: wait for the winner to publish a consistent pair.
