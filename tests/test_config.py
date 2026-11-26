@@ -543,7 +543,21 @@ def test_config_invalid_impersonate_target_lists_alternatives(capsys):
 
 @pytest.mark.parametrize(
     "browser_profile",
-    ["chrome", "firefox", "safari", "edge", "chrome120", "chrome146", "firefox147"],
+    [
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "chrome120",
+        "chrome146",
+        "chrome150",
+        "chrome151",
+        "chrome152",
+        "firefox147",
+        "firefox153",
+        "firefox154",
+        "firefox155",
+    ],
 )
 def test_impersonate_profiles_valid_in_curl_cffi(browser_profile: str):
     """Ensure standard browser profiles are supported by curl_cffi without runtime latency."""

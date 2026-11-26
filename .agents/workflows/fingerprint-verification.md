@@ -15,8 +15,8 @@ The proxy delegates TLS impersonation to `curl_cffi` but must override the
 **header layer**. curl_cffi's impersonation profiles ship two tells that a
 fingerprint service (Cloudflare, browserleaks, etc.) can detect:
 
-1. **Scrubbed UA build** — e.g. `Chrome/150.0.0.0`. Real browsers send a full
-   build like `Chrome/150.0.7871.189`. The `.0.0.0` suffix is the classic
+1. **Scrubbed UA build** — e.g. `Chrome/152.0.0.0`. Real browsers send a full
+   build like `Chrome/152.0.7977.83`. The `.0.0.0` suffix is the classic
    placeholder value proxy tools emit.
 2. **Incomplete Sec-CH-UA family** — only the basic triplets
    (`Sec-CH-UA`, `Sec-CH-UA-Mobile`, `Sec-CH-UA-Platform`). A real desktop
@@ -35,15 +35,17 @@ partial client hints — no genuine browser sends that. Both must be coherent.
 
 A real browser is internally consistent. These must ALL agree, or it's a tell:
 
-- `User-Agent` build (e.g. `150.0.7871.189`) must match the version in
+- `User-Agent` build (e.g. `152.0.7977.83`) must match the version in
   `Sec-CH-UA-Full-Version-List` ("Chromium" and "Google Chrome" entries).
-- `User-Agent` major (e.g. `150`) must match the major in base `Sec-CH-UA`
-  (the src-ch-ua triplet). A mismatch here (146-vs-150) is an instant tell.
+- `User-Agent` major (e.g. `152`) must match the major in base `Sec-CH-UA`
+  (the src-ch-ua triplet). A mismatch here (150-vs-152) is an instant tell.
 - `User-Agent` platform token (e.g. `Windows NT 10.0; Win64; x64`) must match
   `Sec-CH-UA-Platform` (`"Windows"`) and `Sec-CH-UA-Platform-Version`
   (`"10.0.0"`). A Windows UA with `Sec-CH-UA-Platform: "macOS"` is a bot tell.
-- No brand-list skew: `"Not/A)Brand"` short version must use the same
-  major-8 pattern as the full list.
+- No brand-list skew: the GREASE brand string, brand ordering, and GREASE
+  version (always one of Chrome's authentic `8`/`24`/`99`) must match between
+  `Sec-CH-UA` and `Sec-CH-UA-Full-Version-List` (`<ver>.0.0.0`), mirroring
+  `curl_cffi`'s captured signature for that major.
 
 ## How to verify
 
@@ -173,7 +175,7 @@ When bumping `curl_cffi` (especially to a new major target like `chrome1xx`):
 
 ## Firefox curation rules (non-negotiable)
 
-Firefox targets (`firefox147`, alias `firefox`) are curated **UA-only**:
+Firefox targets (`firefox155`, `firefox154`, `firefox153`, `firefox147`, alias `firefox` -> `firefox155`) are curated **UA-only**:
 
 - Firefox sends **no** client hints — `to_headers()` must emit **only**
   `User-Agent` (checked by `test_headers_are_ua_only`). Never add
@@ -185,9 +187,7 @@ Firefox targets (`firefox147`, alias `firefox`) are curated **UA-only**:
   default platform.
 - `header_order` must stay **empty** for Firefox: curl_cffi's firefox
   profiles already ship the authentic captured HTTP/2 order (verified on the
-  wire via tls.peet.ws: user-agent, accept, accept-language, accept-encoding,
-  upgrade-insecure-requests, sec-fetch-dest, sec-fetch-mode, sec-fetch-site,
-  sec-fetch-user, priority, te). `session_pool` skips
+  wire via tls.peet.ws). `session_pool` skips
   `extra_fp={"header_order": ...}` when the order is empty — never "fix" this
   by inventing a Firefox order.
 - Extending to a newer Firefox target: add a `_firefox(<major>, ...)` entry to
@@ -197,19 +197,25 @@ Firefox targets (`firefox147`, alias `firefox`) are curated **UA-only**:
 
 ## Current version facts (as of last verification)
 
-- `curl_cffi` pinned at `>=0.16.4b1` (prerelease required — `chrome150` exists
-  there; `0.16.0` tops out at `chrome146` and raises `ImpersonateError` for
-  `chrome150`).
-- Bare `chrome` resolves to `chrome150`, default fingerprint = Chrome 150
-  `150.0.7871.189`, Windows / x64 / bitness 64 / `10.0.0`.
+- `curl_cffi` pinned at `>=0.17.0` (ships `chrome151`/`chrome152` + `_macos`
+  variants and `firefox153`/`firefox154`/`firefox155`).
+- Bare `chrome` resolves to `chrome152`, default fingerprint = Chrome 152
+  `152.0.7977.83`, Windows / x64 / bitness 64 / `10.0.0`, with authentic
+  Chromium GREASE brand list (`"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"`).
+- `chrome152` in `curl_cffi 0.17.0` ships a reload capture artifact
+  (`cache-control: max-age=0` at the end of its default header list);
+  `session_pool._issue_request` passes `"Cache-Control": None` in
+  `cffi-defaults` mode to suppress profile-default `Cache-Control`.
 - Header order fixed via `extra_fp={"header_order": ...}` on every
   `fingerprint_real` request for Chrome; verified canonical on the wire via
   `tls.peet.ws/api/all`. Firefox targets send no `header_order` override
   (curl_cffi's captured order is already authentic).
-- Firefox curation: `fingerprint_for("firefox147")` / alias `firefox` →
-  UA-only fingerprint (`rv:147.0` == `Firefox/147.0`, Windows/Win64/x64);
+- Firefox curation: `fingerprint_for("firefox155")` / alias `firefox` →
+  UA-only fingerprint (`rv:155.0` == `Firefox/155.0`, Windows/Win64/x64);
   verified through the proxy on `tls.peet.ws/api/all` (UA reflects the pinned
-  Windows Firefox UA, no `sec-ch-ua` family present).
+  Windows Firefox UA, no `sec-ch-ua` family present). Note that `firefox155`
+  in `curl_cffi 0.17.0` was captured from a fetch request (`priority: u=4`,
+  no `upgrade-insecure-requests`).
 - Verified coherent through the proxy against `whoami...`,
   `tls.browserleaks.com/json`, `tls.peet.ws/api/all`, and
   `cloudflare.com/cdn-cgi/trace` — the latter three automated in the

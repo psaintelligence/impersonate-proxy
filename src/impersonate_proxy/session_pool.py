@@ -79,6 +79,13 @@ def _issue_request(
         f"(header_mode={ctx.config.header_mode}, strip_leak={ctx.config.strip_client_leak_headers}, "
         f"headers={sanitize_headers(out_headers)})"
     )
+    request_headers: dict[str, str | None] = dict(out_headers)
+    if ctx.config.header_mode != "passthrough":
+        # Explicitly suppress any profile-default Cache-Control (e.g. curl_cffi
+        # 0.17.0's chrome152 ships a reload capture artifact `cache-control:
+        # max-age=0` at the end of its default header list). Setting None tells
+        # curl_cffi/libcurl to omit the header rather than emitting a default.
+        request_headers["Cache-Control"] = None
     proxies = (
         {"http": ctx.config.upstream_proxy, "https": ctx.config.upstream_proxy} if ctx.config.upstream_proxy else None
     )
@@ -88,7 +95,7 @@ def _issue_request(
     resp: cffi_requests.Response = session.request(  # pyright: ignore[reportUnknownMemberType]
         method=method,  # pyright: ignore[reportArgumentType]  # curl_cffi's HttpMethod literal is narrower than the HTTP method grammar it accepts at runtime
         url=url,
-        headers=out_headers,
+        headers=request_headers,
         data=body,
         timeout=timeout,
         proxies=proxies,  # pyright: ignore[reportArgumentType]  # curl_cffi's ProxySpec TypedDict stub rejects the runtime-accepted scheme-keyed dict

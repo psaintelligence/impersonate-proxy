@@ -1,13 +1,13 @@
 """Realistic browser client-hint header fingerprints.
 
 The curl_cffi impersonation profiles scrub the User-Agent build number
-(e.g. ``Chrome/150.0.0.0``) and omit the full Sec-CH-UA family that a genuine
+(e.g. ``Chrome/152.0.0.0``) and omit the full Sec-CH-UA family that a genuine
 browser sends over HTTPS. This module supplies platform-coherent header sets
 that the proxy injects on top of curl_cffi's TLS impersonation so the resulting
 request looks like a real browser rather than a reconstructed identity.
 
 Every fingerprint is *platform-coherent*: the User-Agent platform token matches
-``Sec-CH-UA-Platform`` and ``Sec-CH-UA-Platform-Version``. Splitting 101_0000000
+``Sec-CH-UA-Platform`` and ``Sec-CH-UA-Platform-Version``. Splitting platforms
 (e.g. a Windows UA with ``Sec-CH-UA-Platform: "macOS"``) is an instant bot tell.
 """
 
@@ -16,12 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # Latest stable Chromium major this package is curated against. Keep in sync
-# with the newest supported curl_cffi chrome target (chrome150 as of 0.16.4b1).
+# with the newest supported curl_cffi chrome target (chrome152 as of 0.17.0).
 # For newer versions: extend _FINGERPRINTS with a new entry and bump DEFAULT_MAJOR.
-DEFAULT_MAJOR: int = 150
-# Final Chrome 150 stable build (last 150-series patch, per Chrome version
-# history; real-world stable ended at 7871.189 before 151 rolled out).
-DEFAULT_BUILD: str = "150.0.7871.189"
+DEFAULT_MAJOR: int = 152
+# Real Chrome 152 Desktop Stable build (Windows/macOS security patch build).
+DEFAULT_BUILD: str = "152.0.7977.83"
 
 # Canonical HTTP/2 header order for a desktop-Chrome navigation request. Mirrors
 # what genuine Chrome emits; unused headers are appended by curl_cffi after this
@@ -98,6 +97,10 @@ def _chrome(
     platform_ua: str,
     platform_value: str,
     platform_version: str,
+    *,
+    grease_brand: str,
+    grease_version: str,
+    brand_order: tuple[str, str, str],
     arch: str = "x86",
     bitness: str = "64",
 ) -> BrowserFingerprint:
@@ -107,11 +110,25 @@ def _chrome(
     10.0; Win64; x64``); ``platform_value`` is the bare value for the
     ``Sec-CH-UA-Platform`` header (e.g. ``Windows``). These differ — a UA that
     says Win64 must pair with ``Sec-CH-UA-Platform: "Windows"``.
+
+    ``grease_brand``, ``grease_version`` (always one of Chrome's ``8``/``24``/``99``),
+    and ``brand_order`` mirror Chromium's deterministic per-major GREASE brand
+    list so ``Sec-CH-UA`` and ``Sec-CH-UA-Full-Version-List`` match real Chrome
+    and ``curl_cffi``'s captured signature verbatim.
     """
     ua = f"Mozilla/5.0 ({platform_ua}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{build} Safari/537.36"
-    # Brand list mirrors what current Chrome emits; "Not/A)Brand" is a real brand.
-    short = f'"Not/A)Brand";v="{major - 8}", "Chromium";v="{major}", "Google Chrome";v="{major}"'
-    full = f'"Not/A)Brand";v="{major - 8}.0.0.0", "Chromium";v="{build}", "Google Chrome";v="{build}"'
+    short_brands = {
+        "grease": f'"{grease_brand}";v="{grease_version}"',
+        "chromium": f'"Chromium";v="{major}"',
+        "chrome": f'"Google Chrome";v="{major}"',
+    }
+    full_brands = {
+        "grease": f'"{grease_brand}";v="{grease_version}.0.0.0"',
+        "chromium": f'"Chromium";v="{build}"',
+        "chrome": f'"Google Chrome";v="{build}"',
+    }
+    short = ", ".join(short_brands[k] for k in brand_order)
+    full = ", ".join(full_brands[k] for k in brand_order)
     return BrowserFingerprint(
         user_agent=ua,
         sec_ch_ua=short,
@@ -137,22 +154,63 @@ def _firefox(major: int, platform_ua: str) -> BrowserFingerprint:
     return BrowserFingerprint(user_agent=ua, header_order="", browser="firefox")
 
 
-# Curated fingerprints keyed by recognized chrome target string.
-# Windows NT 10.0; Win64; x64 is the most common desktop shape.
+# Curated fingerprints keyed by recognized curl_cffi target string.
+# Windows NT 10.0; Win64; x64 is the most common desktop shape; explicit
+# ``*_macos`` targets keep macOS platform coherence.
 _FINGERPRINTS: dict[str, BrowserFingerprint] = {
-    "chrome": _chrome(
-        DEFAULT_MAJOR,
+    "chrome152": _chrome(
+        152,
         DEFAULT_BUILD,
         "Windows NT 10.0; Win64; x64",
         "Windows",
         "10.0.0",
+        grease_brand="Not?A_Brand",
+        grease_version="24",
+        brand_order=("chromium", "grease", "chrome"),
+    ),
+    "chrome152_macos": _chrome(
+        152,
+        DEFAULT_BUILD,
+        "Macintosh; Intel Mac OS X 10_15_7",
+        "macOS",
+        "15.6.0",
+        grease_brand="Not?A_Brand",
+        grease_version="24",
+        brand_order=("chromium", "grease", "chrome"),
+        arch="arm",
+    ),
+    "chrome151": _chrome(
+        151,
+        # Final Chrome 151 Desktop Stable build (151.0.7922.x series).
+        "151.0.7922.174",
+        "Windows NT 10.0; Win64; x64",
+        "Windows",
+        "10.0.0",
+        grease_brand="Not=A?Brand",
+        grease_version="99",
+        brand_order=("grease", "chrome", "chromium"),
+    ),
+    "chrome151_macos": _chrome(
+        151,
+        "151.0.7922.174",
+        "Macintosh; Intel Mac OS X 10_15_7",
+        "macOS",
+        "15.6.0",
+        grease_brand="Not=A?Brand",
+        grease_version="99",
+        brand_order=("grease", "chrome", "chromium"),
+        arch="arm",
     ),
     "chrome150": _chrome(
         150,
-        DEFAULT_BUILD,
+        # Final Chrome 150 stable build (last 150-series patch before 151).
+        "150.0.7871.189",
         "Windows NT 10.0; Win64; x64",
         "Windows",
         "10.0.0",
+        grease_brand="Not;A=Brand",
+        grease_version="8",
+        brand_order=("grease", "chromium", "chrome"),
     ),
     "chrome146": _chrome(
         146,
@@ -162,15 +220,21 @@ _FINGERPRINTS: dict[str, BrowserFingerprint] = {
         "Windows NT 10.0; Win64; x64",
         "Windows",
         "10.0.0",
+        grease_brand="Not-A.Brand",
+        grease_version="24",
+        brand_order=("chromium", "grease", "chrome"),
     ),
+    "firefox155": _firefox(155, "Windows NT 10.0; Win64; x64"),
+    "firefox154": _firefox(154, "Windows NT 10.0; Win64; x64"),
+    "firefox153": _firefox(153, "Windows NT 10.0; Win64; x64"),
     "firefox147": _firefox(147, "Windows NT 10.0; Win64; x64"),
 }
 
 # curl_cffi's bare aliases ("chrome"/"firefox" default to the newest supported
 # target; mirror curl_cffi's own DEFAULT_* resolution).
 _ALIASES: dict[str, str] = {
-    "chrome": "chrome150",
-    "firefox": "firefox147",
+    "chrome": "chrome152",
+    "firefox": "firefox155",
 }
 
 

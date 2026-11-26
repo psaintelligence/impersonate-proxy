@@ -36,7 +36,7 @@ The proxy operates in two primary modes depending on whether it receives plain H
    - `--strip-client-leak-headers` (orthogonal flag) drops middlebox-chain/tracing headers (`X-Forwarded-*`, `Forwarded`, `Via`, `X-Request-ID`, `X-Correlation-ID`); CDN-ingress headers (`X-Real-IP`, `True-Client-IP`, etc.) are forwarded with a warning, not dropped.
 
 4. **Realistic Client-Hint Fingerprint Override (`fingerprint_real`, default on)**:
-   - curl_cffi's profiles emit two residual tells: a scrubbed UA build (`Chrome/150.0.0.0`) and an incomplete `Sec-CH-UA` family.
+   - curl_cffi's profiles emit two residual tells: a scrubbed UA build (`Chrome/152.0.0.0`) and an incomplete `Sec-CH-UA` family.
    - `fingerprint.py` curates platform-coherent header sets (full-build UA + complete `Sec-CH-UA-*` family) keyed by curl_cffi target, injected on top in `cffi-defaults` mode.
    - Canonical HTTP/2 header order is enforced via `extra_fp={"header_order": ...}` on every request (HTTP/2 only).
    - Curated builds must track real-world Chrome stable releases (see `.agents/workflows/fingerprint-verification.md`); disable with `--no-fingerprint-real` / `IMPERSONATE_PROXY_FINGERPRINT_REAL=false`.
@@ -56,7 +56,7 @@ The proxy operates in two primary modes depending on whether it receives plain H
    - CA generation is concurrency-safe: an exclusive `.generate-claim` file elects one generator that publishes `ca.key`/`ca.crt` via atomic `os.replace`; losers wait for a consistent pair (`cert_manager._load_ca_files` verifies key↔cert match on load).
    - Leaf certs load from a single combined PEM temp file (cert+key); stdlib `SSLContext` has no in-memory cert loading.
    - `--max-threads N` (0 = unlimited) caps concurrent handler threads via a `BoundedSemaphore` in `ThreadingHTTPServer.process_request`; the accept loop blocks at the cap (backlog absorbs excess).
-   - Firefox fingerprints (`fingerprint_for("firefox147")`, alias `firefox`) are UA-only (`browser="firefox"` → `to_headers()` emits just the User-Agent) with empty `header_order` — never impose Chrome's order or CH family on Firefox targets; `session_pool` only sends `extra_fp={"header_order": ...}` when the fingerprint has a non-empty order.
+   - Firefox fingerprints (`fingerprint_for("firefox155")`, alias `firefox`) are UA-only (`browser="firefox"` → `to_headers()` emits just the User-Agent) with empty `header_order` — never impose Chrome's order or CH family on Firefox targets; `session_pool` only sends `extra_fp={"header_order": ...}` when the fingerprint has a non-empty order.
 
 ---
 

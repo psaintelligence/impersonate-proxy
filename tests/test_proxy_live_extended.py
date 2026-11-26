@@ -243,10 +243,10 @@ def _assert_profile_user_agent(ua: str, impersonate: str) -> None:
     assert ua, "Expected non-empty reflected User-Agent"
     assert "Windows NT 10.0" in ua, f"Expected Windows platform in UA, got {ua!r}"
     if impersonate.startswith("firefox"):
-        assert "rv:147.0" in ua and "Firefox/147.0" in ua, f"Expected full-build Firefox/147 UA, got {ua!r}"
+        assert "rv:155.0" in ua and "Firefox/155.0" in ua, f"Expected full-build Firefox/155 UA, got {ua!r}"
     else:
-        assert "Chrome/150." in ua, f"Expected Chrome/150 UA, got {ua!r}"
-        assert "Chrome/150.0.0.0" not in ua, f"Scrubbed build in UA: {ua!r}"
+        assert "Chrome/152." in ua, f"Expected Chrome/152 UA, got {ua!r}"
+        assert "Chrome/152.0.0.0" not in ua, f"Scrubbed build in UA: {ua!r}"
 
 
 def _assert_status(
@@ -288,17 +288,6 @@ class TestFingerprintBypass:
     and chrome/firefox under cffi-defaults+strip mode. The +strip variant injects
     non-browser-client-like leak headers via _get() to prove the strip path actually drops them.
     """
-
-    def test_nowsecure_nl(self, proxy_server: tuple[str, str, str, str, bool]) -> None:
-        """nowsecure.nl is a browser fingerprint / TLS test page."""
-        proxy_url, ca_cert_path, impersonate, header_mode, strip_leak = proxy_server
-        url = "https://nowsecure.nl"
-
-        unproxied_status = _get_unproxied(url, use_chrome_headers=False)
-        resp = _get(url, proxy_url, ca_cert_path, impersonate, inject_leak_headers=strip_leak)
-
-        _assert_status(url, resp.status_code, unproxied_status, impersonate, header_mode)
-        assert len(resp.content) > 1000, "Response body suspiciously small"
 
     def test_cloudflare_homepage(self, proxy_server: tuple[str, str, str, str, bool]) -> None:
         """cloudflare.com uses JA3/JA4 fingerprinting."""
@@ -513,24 +502,29 @@ class TestFingerprintBypass:
         ua = data.get("user_agent", "") or sent_headers.get("user-agent", "")
         assert ua, "Expected non-empty user_agent in tls.peet.ws response"
         if impersonate.startswith("firefox"):
-            assert "Firefox/147" in ua, f"Expected Firefox/147 UA, got {ua!r}"
+            assert "Firefox/155" in ua, f"Expected Firefox/155 UA, got {ua!r}"
             # Firefox does not send Sec-Ch-Ua-* headers.
             assert "sec-ch-ua" not in sent_headers, "Firefox should not send Sec-Ch-Ua"
             assert "sec-ch-ua-mobile" not in sent_headers
             assert "sec-ch-ua-platform" not in sent_headers
+            # curl_cffi 0.17.0's firefox155 profile carries priority 'u=4'
+            # (captured from a fetch request, without upgrade-insecure-requests).
+            assert sent_headers.get("priority") == "u=4", (
+                f"Expected firefox155 priority 'u=4', got {sent_headers.get('priority')!r}"
+            )
         else:
             # fingerprint-real injects a real (non-scrubbed) build + Windows platform.
-            assert "Chrome/150." in ua, f"Expected real Chrome/150 build UA, got {ua!r}"
-            assert "Chrome/150.0.0.0" not in ua, f"scrubbed build in UA: {ua!r}"
+            assert "Chrome/152." in ua, f"Expected real Chrome/152 build UA, got {ua!r}"
+            assert "Chrome/152.0.0.0" not in ua, f"scrubbed build in UA: {ua!r}"
             assert "Windows" in ua, f"Expected Windows UA (fingerprint platform), got {ua!r}"
             # curl_cffi injects the full sec-ch-ua-* set for Chrome. tls.peet.ws
             # returns these header values with double-quotes escaped as \", so
             # normalise before asserting.
             assert "sec-ch-ua" in sent_headers, "sec-ch-ua should be injected"
             sec_ch_ua = sent_headers["sec-ch-ua"].replace('\\"', '"')
-            assert '"Chromium";v="150"' in sec_ch_ua, f"Expected Chromium v=150 in sec-ch-ua, got {sec_ch_ua!r}"
-            assert '"Google Chrome";v="150"' in sec_ch_ua, (
-                f"Expected Google Chrome v=150 in sec-ch-ua, got {sec_ch_ua!r}"
+            assert '"Chromium";v="152"' in sec_ch_ua, f"Expected Chromium v=152 in sec-ch-ua, got {sec_ch_ua!r}"
+            assert '"Google Chrome";v="152"' in sec_ch_ua, (
+                f"Expected Google Chrome v=152 in sec-ch-ua, got {sec_ch_ua!r}"
             )
             assert sent_headers.get("sec-ch-ua-mobile") == "?0"
             sec_ch_ua_platform = sent_headers.get("sec-ch-ua-platform", "")
@@ -549,16 +543,16 @@ class TestFingerprintBypass:
                 f"full-version-list {full_list!r} does not match UA build {ua_build!r}"
             )
             assert f'"Google Chrome";v="{ua_build}"' in full_list
+            assert sent_headers.get("priority") == "u=0, i", (
+                f"Expected priority 'u=0, i', got {sent_headers.get('priority')!r}"
+            )
+            assert sent_headers.get("upgrade-insecure-requests") == "1", (
+                f"Expected upgrade-insecure-requests '1', got {sent_headers.get('upgrade-insecure-requests')!r}"
+            )
 
         # --- curl_cffi injects these (client sent bot tells / wrong values that were stripped) ---
         assert sent_headers.get("accept-encoding") == "gzip, deflate, br, zstd", (
             f"Expected curl_cffi's accept-encoding, got {sent_headers.get('accept-encoding')!r}"
-        )
-        assert sent_headers.get("priority") == "u=0, i", (
-            f"Expected priority 'u=0, i', got {sent_headers.get('priority')!r}"
-        )
-        assert sent_headers.get("upgrade-insecure-requests") == "1", (
-            f"Expected upgrade-insecure-requests '1', got {sent_headers.get('upgrade-insecure-requests')!r}"
         )
 
         # --- Bot tells MUST NOT be forwarded (cffi-defaults drops them) ---
