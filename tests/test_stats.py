@@ -134,6 +134,8 @@ class TestMetricsEndpoint:
 
             metrics = requests.get(f"http://127.0.0.1:{stats_port}/metrics", timeout=5).text
             assert 'impersonate_proxy_requests_total{mode="plain_http"} 1' in metrics
+            assert "impersonate_proxy_request_duration_seconds_count 1" in metrics
+            assert "impersonate_proxy_active_threads 0" in metrics
         finally:
             server.shutdown()
             stats_server.shutdown()

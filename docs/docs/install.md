@@ -34,8 +34,11 @@ docker run --rm -p 8899:8899 \
 ```
 
 The container runs as a dedicated non-root user (`impersonate`) and ships a
-`HEALTHCHECK` that probes the proxy's local loopback `/healthz` endpoint (no
-external network calls).
+`HEALTHCHECK` that probes both the local loopback `/healthz` endpoint and an
+end-to-end proxied request to Microsoft's lightweight connectivity probe
+(`http://edge-http.microsoft.com/captiveportal/generate_204`). Override the
+target with `IMPERSONATE_PROXY_HEALTHCHECK_URL` (or set it to `""` for
+air-gapped deployments to run `/healthz` only).
 
 ### Docker Compose
 You can spin up the service in the background using docker-compose:
@@ -203,26 +206,38 @@ request with a 502 and no actionable hint.
 
 ---
 
-## Access Control (shared deployments)
+## Access Control & Routing (shared deployments)
 
 The default bind is `127.0.0.1` (local only). When binding to a broader
-interface (`--host 0.0.0.0`, Docker), two orthogonal guardrails prevent the
-proxy from acting as an unauthenticated open relay:
+interface (`--host 0.0.0.0`, Docker), orthogonal guardrails keep the proxy from
+acting as an unauthenticated open relay or SSRF pivot:
 
 ```bash
 # Require Basic proxy authentication (client: curl -x http://alice:s3cret@127.0.0.1:8899)
 impersonate-proxy --host 0.0.0.0 --proxy-auth alice:s3cret
 
-# Restrict which clients may connect (bare IPs use the /24 or /64 auto-netblock)
-impersonate-proxy --host 0.0.0.0 --allow-from 10.0.0.0/8,192.168.1.7
+# Restrict clients, block SSRF targets, bypass MITM for pinned hosts, and reload lists on SIGHUP
+impersonate-proxy --host 0.0.0.0 \
+  --allow-from @/etc/impersonate-proxy/allow.txt \
+  --block-host @/etc/impersonate-proxy/block.txt \
+  --raw-tunnel-host @/etc/impersonate-proxy/pinned.txt \
+  --block-private-ips \
+  --dns https://1.1.1.1/dns-query \
+  --log-format json
 ```
 
 - `--proxy-auth` checks `Proxy-Authorization: Basic` on both CONNECT and
   plain-HTTP requests in constant time; unauthorized clients receive
   `407 Proxy Authentication Required` with a `Proxy-Authenticate` challenge.
 - `--allow-from` refuses clients outside the listed netblocks with `403`.
-- Both flags are off by default; local usage and existing Docker flows are
-  unchanged. Combine with `--block-host` for a full per-deployment policy.
+- `--block-private-ips` blocks requests targeting private, loopback, link-local
+  (`169.254.169.254`), CGNAT, ULA, or multicast IP addresses with `403`.
+- `--raw-tunnel-host` relays matched `CONNECT` hosts as raw TCP tunnels without
+  MITM decryption (useful for certificate-pinned apps or WebSockets).
+- `--block-host`, `--allow-from`, and `--raw-tunnel-host` accept `@/path/to/file`
+  lists and reload atomically on `SIGHUP`.
+- All guardrails are off by default; local usage and existing Docker flows are
+  unchanged.
 
 ---
 

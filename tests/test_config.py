@@ -623,9 +623,10 @@ def test_parse_entry_spec_and_sighup_reload(tmp_path):
 
 
 def test_json_log_formatter():
-    """_JsonLogFormatter emits valid single-line JSON with timestamp/level/logger/message."""
+    """_JsonLogFormatter emits valid single-line JSON (including exc_info) and configure_logging wires it."""
     import json
     import logging
+    import sys
 
     formatter = impersonate_proxy._JsonLogFormatter()
     record = logging.LogRecord("impersonate-proxy", logging.INFO, __file__, 1, "hello %s", ("world",), None)
@@ -636,6 +637,74 @@ def test_json_log_formatter():
     assert parsed["logger"] == "impersonate-proxy"
     assert parsed["message"] == "hello world"
     assert "timestamp" in parsed
+
+    try:
+        raise ValueError("bad input")
+    except ValueError:
+        exc_record = logging.LogRecord("impersonate-proxy", logging.ERROR, __file__, 2, "failed", (), sys.exc_info())
+    exc_parsed = json.loads(formatter.format(exc_record))
+    assert "ValueError: bad input" in exc_parsed["exc_info"]
+
+    impersonate_proxy.configure_logging(debug=True, log_format="json")
+    assert any(isinstance(h.formatter, impersonate_proxy._JsonLogFormatter) for h in logging.getLogger().handlers)
+    impersonate_proxy.configure_logging(debug=False, log_format="text")
+
+
+def test_main_passes_reload_sources_and_errors_on_missing_list_file(tmp_path):
+    """CLI @file specs populate reload_sources; missing @file fails fast with exit 2."""
+    block_file = tmp_path / "block.txt"
+    block_file.write_text("bad.example\n", encoding="utf-8")
+
+    with (
+        patch("sys.argv", ["impersonate-proxy", "--block-host", f"@{block_file}"]),
+        patch.dict(os.environ, {}, clear=True),
+        patch("impersonate_proxy.main.run") as mock_run,
+    ):
+        impersonate_proxy.main()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["block_hosts"] == ("bad.example",)
+        assert kwargs["reload_sources"]["block_host"] == f"@{block_file}"
+
+    with (
+        patch("sys.argv", ["impersonate-proxy", "--block-host", f"@{tmp_path / 'does-not-exist.txt'}"]),
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(SystemExit) as exc,
+    ):
+        impersonate_proxy.main()
+    assert exc.value.code == 2
+
+
+def test_run_registers_and_handles_sighup_reload(tmp_path):
+    """Sending SIGHUP during run() reloads @file lists into the live ProxyContext."""
+    import signal
+
+    if not hasattr(signal, "SIGHUP"):
+        pytest.skip("SIGHUP not available on this platform")
+
+    block_file = tmp_path / "block.txt"
+    block_file.write_text("first.example\n", encoding="utf-8")
+
+    from impersonate_proxy.context import ProxyContext
+
+    ctx = ProxyContext()
+
+    def _trigger_sighup_then_stop(self):
+        assert ctx.config.block_hosts == ("first.example",)
+        block_file.write_text("second.example\n", encoding="utf-8")
+        os.kill(os.getpid(), signal.SIGHUP)
+        assert ctx.config.block_hosts == ("second.example",)
+        raise KeyboardInterrupt
+
+    with (
+        patch("socketserver.BaseServer.serve_forever", _trigger_sighup_then_stop),
+        patch("impersonate_proxy.cert_manager.init_ca"),
+    ):
+        impersonate_proxy.run(
+            port=0,
+            block_hosts=("first.example",),
+            reload_sources={"block_host": f"@{block_file}"},
+            ctx=ctx,
+        )
 
 
 def test_config_invalid_impersonate_target():

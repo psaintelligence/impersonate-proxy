@@ -98,6 +98,36 @@ class TestSessionManagement:
         assert _parse_dns_option("1.1.1.1, 8.8.8.8") == (["1.1.1.1", "8.8.8.8"], None)
         assert _parse_dns_option("https://1.1.1.1/dns-query") == (None, "https://1.1.1.1/dns-query")
 
+    def test_get_session_wires_curl_share_dns_and_safety_flags(self):
+        """get_session must pass discard_cookies=True, trust_env=False, curl_share, and dns/doh_url."""
+        from unittest.mock import patch
+
+        ctx_doh = ProxyContext(ProxyConfig(impersonate="chrome", dns="https://1.1.1.1/dns-query"))
+        with patch("impersonate_proxy.session_pool.cffi_requests.Session") as mock_cls:
+            get_session(ctx_doh)
+            mock_cls.assert_called_once_with(
+                impersonate="chrome",
+                discard_cookies=True,
+                trust_env=False,
+                curl_share=ctx_doh.get_curl_share(),
+                dns=None,
+                doh_url="https://1.1.1.1/dns-query",
+            )
+        ctx_doh.clear_session_pool()
+
+        ctx_ip = ProxyContext(ProxyConfig(impersonate="firefox", dns="1.1.1.1, 8.8.8.8"))
+        with patch("impersonate_proxy.session_pool.cffi_requests.Session") as mock_cls:
+            get_session(ctx_ip)
+            mock_cls.assert_called_once_with(
+                impersonate="firefox",
+                discard_cookies=True,
+                trust_env=False,
+                curl_share=ctx_ip.get_curl_share(),
+                dns=["1.1.1.1", "8.8.8.8"],
+                doh_url=None,
+            )
+        ctx_ip.clear_session_pool()
+
 
 class TestRedactionUtilities:
     def test_show_identifying_redacts_by_default(self):

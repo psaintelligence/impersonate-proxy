@@ -433,3 +433,48 @@ class TestRawTunnelFallback:
             finally:
                 server.shutdown()
                 ctx.clear_session_pool()
+
+    def test_raw_tunnel_host_suffix_matching_and_guardrail_precedence(self):
+        """raw_tunnel_hosts supports exact/suffix matching, and block_hosts /
+        block_private_ips still take precedence before opening any raw tunnel."""
+        from impersonate_proxy.server import is_host_raw_tunnel, raw_tunnel
+
+        ctx = ProxyContext(ProxyConfig(raw_tunnel_hosts=("pinned.example.com",)))
+        assert is_host_raw_tunnel(ctx, "pinned.example.com") is True
+        assert is_host_raw_tunnel(ctx, "API.PINNED.EXAMPLE.COM.") is True
+        assert is_host_raw_tunnel(ctx, "notpinned.example.com") is False
+
+        # raw_tunnel must honor ctx.config.connect_timeout.
+        ctx_t = ProxyContext(ProxyConfig(connect_timeout=4.25))
+        with patch("socket.create_connection", side_effect=OSError("boom")) as mock_conn:
+            raw_tunnel(ctx_t, socket.socket(), "example.com", 443)
+            mock_conn.assert_called_once_with(("example.com", 443), timeout=4.25)
+
+        # block_hosts and block_private_ips must reject CONNECT with 403 even if listed in raw_tunnel_hosts.
+        ctx_guard = ProxyContext(
+            ProxyConfig(
+                block_hosts=("blocked.test",),
+                raw_tunnel_hosts=("blocked.test", "127.0.0.1"),
+                block_private_ips=True,
+            )
+        )
+        server, proxy_url = start_proxy(ctx_guard)
+        port = int(proxy_url.rsplit(":", 1)[1])
+        try:
+            for target in ("blocked.test:443", "127.0.0.1:443"):
+                raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+                raw.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n".encode())
+                status, _ = _read_response(raw)
+                raw.close()
+                assert status == 403
+
+            # Bad host:port gets 400 and records a 4xx status in stats.
+            raw = socket.create_connection(("127.0.0.1", port), timeout=10)
+            raw.sendall(b"CONNECT example.com:notaport HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            status, _ = _read_response(raw)
+            raw.close()
+            assert status == 400
+            assert ctx_guard.stats.snapshot(0).status_classes.get("4xx") == 3
+        finally:
+            server.shutdown()
+            ctx_guard.clear_session_pool()

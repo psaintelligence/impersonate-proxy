@@ -49,6 +49,12 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"OK")
             return
 
+        if self.path == "/not-modified":
+            self.send_response(304)
+            self.send_header("ETag", '"v1"')
+            self.end_headers()
+            return
+
         if self.path == "/set-cookies":
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -204,6 +210,49 @@ class TestProxyHTTP:
             s.close()
         assert b"200" in raw.split(b"\r\n", 1)[0]
         assert b"POST /submit body=hello-chunk" in raw
+
+    def test_proxy_plain_http_304_bodyless_and_bad_scheme_and_chunked_limits(self, upstream_server):
+        """Plain HTTP handles 304 without chunked framing, rejects non-http(s) schemes,
+        rejects conflicting TE+CL with 400, and rejects oversized chunked bodies with 413."""
+        ctx = ProxyContext(ProxyConfig(max_body_size=8))
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        host, port_s = proxy_url.split("//")[1].split(":")
+        port = int(port_s)
+        try:
+            # 304 Not Modified must not emit Transfer-Encoding: chunked.
+            r304 = requests.get(f"{upstream_server}/not-modified", proxies={"http": proxy_url}, timeout=10)
+            assert r304.status_code == 304
+            assert r304.headers.get("ETag") == '"v1"'
+            assert "transfer-encoding" not in {k.lower() for k in r304.headers}
+
+            # Non-http(s) scheme rejected with 400.
+            with socket.create_connection((host, port), timeout=10) as s:
+                s.sendall(b"GET httpfoo://example.com/x HTTP/1.1\r\nHost: example.com\r\n\r\n")
+                assert b"400" in s.recv(4096).split(b"\r\n", 1)[0]
+
+            # Conflicting Transfer-Encoding + Content-Length rejected with 400.
+            with socket.create_connection((host, port), timeout=10) as s:
+                s.sendall(
+                    f"POST {upstream_server}/submit HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1\r\n"
+                    f"Transfer-Encoding: chunked\r\n"
+                    f"Content-Length: 5\r\n\r\n"
+                    f"0\r\n\r\n".encode()
+                )
+                assert b"400" in s.recv(4096).split(b"\r\n", 1)[0]
+
+            # Oversized chunked request body rejected with 413.
+            with socket.create_connection((host, port), timeout=10) as s:
+                s.sendall(
+                    f"POST {upstream_server}/submit HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1\r\n"
+                    f"Transfer-Encoding: chunked\r\n\r\n"
+                    f"a\r\n0123456789\r\n0\r\n\r\n".encode()
+                )
+                assert b"413" in s.recv(4096).split(b"\r\n", 1)[0]
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
 
     def test_proxy_preserves_upstream_headers(self, proxy_server, upstream_server):
         resp = requests.get(f"{upstream_server}/hello", proxies={"http": proxy_server})
@@ -362,6 +411,23 @@ class TestProxyHTTP:
             assert call_kwargs["headers"] == client_headers
             assert call_kwargs["extra_fp"] is None
 
+    def test_cffi_defaults_suppresses_profile_cache_control(self):
+        """In cffi-defaults mode, do_request passes Cache-Control=None so curl_cffi
+        omits profile-default capture artifacts (e.g. chrome152 cache-control: max-age=0)."""
+        from unittest.mock import patch
+
+        from impersonate_proxy.context import ProxyConfig, ProxyContext
+        from impersonate_proxy.session_pool import do_request
+
+        ctx = ProxyContext(ProxyConfig(header_mode="cffi-defaults", fingerprint_real=True))
+        with patch("impersonate_proxy.session_pool.get_session") as mock_get_session:
+            mock_sess = mock_get_session.return_value
+            do_request(ctx, "GET", "https://example.com/", {"User-Agent": "bot/1.0"}, None)
+            call_kwargs = mock_sess.request.call_args[1]
+            assert call_kwargs["headers"]["Cache-Control"] is None
+            assert call_kwargs["extra_fp"] is not None
+            assert "header_order" in call_kwargs["extra_fp"]
+
     def test_pooled_sessions_do_not_bleed_or_clobber_cookies(self, upstream_server):
         """Set-Cookie from one request must never bleed into or overwrite another
         client's Cookie header when reusing a pooled curl_cffi session."""
@@ -484,31 +550,78 @@ class TestHealthcheck:
         assert _is_loopback_client("203.0.113.10") is False
         assert _is_loopback_client("not-an-ip") is False
 
-    def test_docker_healthcheck_script_succeeds_and_fails_cleanly(self):
-        """docker/healthcheck.py exits 0 against a live proxy and 1 against a closed port."""
+        # End-to-end handler check: a remote client hitting a 0.0.0.0-bound proxy's
+        # /healthz must fall through to normal access-control handling (403), not 200.
+        from unittest.mock import patch
+
+        ctx = ProxyContext(ProxyConfig(allow_from=("10.0.0.0/8",)))
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        server.bind_host = "0.0.0.0"
+        try:
+            with patch("impersonate_proxy.server._is_loopback_client", return_value=False):
+                resp = requests.get(f"{proxy_url}/healthz", timeout=5)
+            assert resp.status_code == 403
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
+
+    def test_docker_healthcheck_script_succeeds_and_fails_cleanly(self, upstream_server):
+        """docker/healthcheck.py verifies /healthz and end-to-end proxied forwarding (with auth)."""
         import os
         import subprocess
         import sys
 
-        ctx = ProxyContext(ProxyConfig(proxy_auth="alice:secret", allow_from=("10.0.0.0/8",)))
+        ctx = ProxyContext(ProxyConfig(proxy_auth="alice:secret"))
         server, proxy_url = _start_proxy_with_ctx(ctx)
         port = proxy_url.rsplit(":", 1)[1]
-        env = dict(os.environ, IMPERSONATE_PROXY_HOST="0.0.0.0", IMPERSONATE_PROXY_PORT=port)
+        base_env = dict(
+            os.environ,
+            IMPERSONATE_PROXY_HOST="0.0.0.0",
+            IMPERSONATE_PROXY_PORT=port,
+            IMPERSONATE_PROXY_PROXY_AUTH="alice:secret",
+        )
         try:
-            res_ok = subprocess.run(
+            # 1. Local /healthz only (air-gapped mode).
+            res_local = subprocess.run(
                 [sys.executable, "docker/healthcheck.py"],
-                env=env,
+                env=dict(base_env, IMPERSONATE_PROXY_HEALTHCHECK_URL=""),
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
-            assert res_ok.returncode == 0, res_ok.stderr
+            assert res_local.returncode == 0, res_local.stderr
+
+            # 2. Full end-to-end proxied probe with Proxy-Authorization.
+            res_e2e = subprocess.run(
+                [sys.executable, "docker/healthcheck.py"],
+                env=dict(base_env, IMPERSONATE_PROXY_HEALTHCHECK_URL=f"{upstream_server}/hello"),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert res_e2e.returncode == 0, res_e2e.stderr
+
+            # 3. Unreachable upstream (502) fails healthcheck.
+            res_502 = subprocess.run(
+                [sys.executable, "docker/healthcheck.py"],
+                env=dict(base_env, IMPERSONATE_PROXY_HEALTHCHECK_URL="http://127.0.0.1:1/unreachable"),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert res_502.returncode == 1
+            assert "HTTP 502" in res_502.stderr
         finally:
             server.shutdown()
             server.server_close()
             ctx.clear_session_pool()
 
-        closed_env = dict(os.environ, IMPERSONATE_PROXY_HOST="127.0.0.1", IMPERSONATE_PROXY_PORT=str(_get_free_port()))
+        closed_env = dict(
+            os.environ,
+            IMPERSONATE_PROXY_HOST="127.0.0.1",
+            IMPERSONATE_PROXY_PORT=str(_get_free_port()),
+            IMPERSONATE_PROXY_HEALTHCHECK_URL="",
+        )
         res_fail = subprocess.run(
             [sys.executable, "docker/healthcheck.py"],
             env=closed_env,

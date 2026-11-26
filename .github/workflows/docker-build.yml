@@ -3,9 +3,26 @@ name: docker-build
 on:
   push:
     branches:
-      - 'dev'
+      - "dev"
     tags:
-      - 'v*'
+      - "v*"
+  pull_request:
+    branches:
+      - "main"
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+      - ".github/workflows/docker-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -14,6 +31,7 @@ env:
 jobs:
   tag-alignment:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -26,8 +44,7 @@ jobs:
       - name: Verify git tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/}"
-          TAG_VERSION="${TAG_VERSION#v}"
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
           PKG_VERSION=$(python -c "import sys; sys.path.insert(0, 'src'); import impersonate_proxy; print(impersonate_proxy.__version__)")
           echo "Tag version: $TAG_VERSION"
           echo "Package version: $PKG_VERSION"
@@ -37,43 +54,19 @@ jobs:
           fi
 
   project-tests:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/project-tests.yml
 
-  docker-build:
-    needs: [project-tests, tag-alignment]
-    if: ${{ !failure() && !cancelled() }}
+  docker-smoke:
+    needs: [tag-alignment]
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-
-      - name: Ensure lowercase image name
-        run: echo "IMAGE_NAME=$(echo ${{ env.IMAGE_NAME }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-         # Note: this metadata action handles semver tagging automatically
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=raw,value=dev-${{ github.sha }},enable=${{ github.ref_name == 'dev' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -83,9 +76,72 @@ jobs:
         with:
           call: check
 
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          load: true
+          tags: impersonate-proxy:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test container healthcheck
+        run: |
+          CID=$(docker run -d --rm impersonate-proxy:smoke)
+          trap 'docker stop "$CID" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 20); do
+            if docker exec "$CID" python /app/healthcheck.py; then
+              echo "Container healthcheck passed"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          docker logs "$CID" || true
+          echo "::error::Container failed /app/healthcheck.py smoke test"
+          exit 1
+
+  docker-push:
+    needs: [project-tests, tag-alignment, docker-smoke]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Ensure lowercase image name
+        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=dev-${{ github.sha }},enable=${{ github.ref_name == 'dev' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

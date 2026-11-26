@@ -58,12 +58,12 @@ impersonate-proxy
 
 ## Features
 
-- **TLS Impersonation**: Disguises client TLS fingerprints as standard browsers (Chrome or Firefox).
-- **Header Adapter & Delegation**: Strips conflicting non-browser client headers (e.g. `User-Agent: python-httpx`) so native `curl-impersonate` profile defaults shine through, while preserving payload and auth semantics.
-- **Realistic Fingerprinting**: Injects a platform-coherent full-build User-Agent with the complete `Sec-CH-UA` family and canonical HTTP/2 header order for Chrome targets, and a UA-only full-build User-Agent for Firefox targets, on top of curl_cffi's TLS impersonation (on by default, `--no-fingerprint-real` to disable).
-- **Open-Proxy Guardrails**: Optional Basic proxy authentication (`--proxy-auth`), client allowlist (`--allow-from`), and target deny list (`--block-host`) to run the proxy as a controlled egress point.
-- **Connection Keep-Alive & Session Pooling**: Reuses TLS sessions and upstream TCP connections to optimize latency and handle high-concurrency requests, with an optional `--max-threads` handler cap and a `--stats-port` Prometheus endpoint.
-- **Fast Dynamic Cert Generation**: Dynamic certificate generation using fast Elliptic Curve (ECDSA P-256) cryptography with leaf key reuse.
+- **TLS Impersonation**: Disguises client TLS fingerprints as standard browsers (Chrome or Firefox via `curl_cffi >= 0.17.0`).
+- **Header Adapter & Delegation**: Strips conflicting non-browser client headers (e.g. `User-Agent: python-httpx` and the full `Sec-CH-UA-*` family) so native `curl-impersonate` profile defaults shine through, while preserving payload, auth, and multi-cookie semantics.
+- **Realistic Fingerprinting**: Injects a platform-coherent full-build User-Agent with the complete `Sec-CH-UA` family, authentic Chromium GREASE brand lists, and canonical HTTP/2 header order for Chrome targets — and a UA-only full-build User-Agent for Firefox targets — on top of curl_cffi's TLS impersonation (on by default, `--no-fingerprint-real` to disable).
+- **Access Control & SSRF Guardrails**: Optional Basic proxy authentication (`--proxy-auth`), client allowlist (`--allow-from`), target deny list (`--block-host`), MITM-bypass raw-tunnel list (`--raw-tunnel-host`), and private-network egress blocking (`--block-private-ips`), with `@/path/to/file` lists and `SIGHUP` live reload.
+- **Connection Keep-Alive, `CurlShare` & Custom DNS**: Pools stateless `curl_cffi` sessions (`discard_cookies=True`, `trust_env=False`) backed by a shared DNS + TLS session cache (`CurlShare`), optional custom DNS / DoH (`--dns`), `--max-threads` handler cap, structured JSON logging (`--log-format json`), local `/healthz` liveness probe, and Prometheus `/metrics` (`--stats-port`) with latency histograms and active-thread gauges.
+- **Fast Dynamic Cert Generation**: Dynamic certificate generation using fast Elliptic Curve (ECDSA P-256) cryptography with leaf key reuse and an expiring LRU SSLContext cache.
 
 ---
 
@@ -72,13 +72,13 @@ impersonate-proxy
 | Capability | What it does | Benefit |
 |---|---|---|
 | **TLS Fingerprinting** | Matches JA3/JA4/HTTP2 fingerprints with real browsers | Defeats Cloudflare, Akamai, and Imperva WAF blocks |
-| **MITM CONNECT Decryption** | Decrypts and re-signs HTTPS traffic using local CA | Allows inspection, header filtering, and proxying of TLS streams |
+| **MITM CONNECT Decryption** | Decrypts and re-signs HTTPS traffic using local CA (with `--raw-tunnel-host` bypass) | Allows inspection, header filtering, and proxying of TLS streams while supporting pinned/WebSocket hosts |
 | **Header Delegation** | Strips non-browser headers and delegates to `curl-impersonate` | Ensures User-Agent and TLS fingerprint profiles align natively without duplication |
-| **Client-Hint Coherence** | Full-build UA + complete `Sec-CH-UA` family in canonical HTTP/2 header order (Chrome); UA-only curation for Firefox | Removes the scrubbed-UA / partial-client-hint tells that fingerprint services flag |
-| **Open-Proxy Guardrails** | Optional `--proxy-auth`, `--allow-from` client allowlist, and `--block-host` deny list | Runs the proxy as a controlled, multi-user-safe egress point |
-| **Session Pooling** | Maintains queue-based reusable `curl_cffi` sessions | Boosts performance for concurrent request bursts to ~70+ RPS |
-| **P-256 Cryptography** | Reuses a static leaf private key for ECDSA cert creation | Reduces leaf certificate dynamic issuance time to `<1ms` |
-| **Observability & Limits** | Prometheus `/metrics` (`--stats-port`) and `--max-threads` handler cap | Monitors traffic live and prevents resource exhaustion under load |
+| **Client-Hint Coherence** | Full-build UA + complete `Sec-CH-UA` family with authentic GREASE in canonical HTTP/2 header order (Chrome); UA-only curation for Firefox | Removes the scrubbed-UA / partial-client-hint tells that fingerprint services flag |
+| **Access Control & SSRF Guardrails** | Optional `--proxy-auth`, `--allow-from`, `--block-host`, `--block-private-ips`, and `SIGHUP` file reload | Runs the proxy as a controlled, multi-user-safe egress point |
+| **Session Pooling & `CurlShare`** | Stateless pooled `curl_cffi` sessions with shared DNS + TLS session resumption and optional `--dns` / DoH | Boosts throughput without cross-client cookie leakage or proxy env loops |
+| **P-256 Cryptography** | Reuses a static leaf private key with a true LRU + pre-expiry cert cache | Keeps leaf cert issuance `<1ms` and avoids serving expired certs in long-lived containers |
+| **Observability & Limits** | Prometheus `/metrics` (counters, active threads, latency histogram), `--log-format json`, local `/healthz`, and `--max-threads` | Monitors traffic live, integrates with log/container tooling, and prevents resource exhaustion |
 
 ---
 
