@@ -72,6 +72,20 @@ class TestFingerprintFor:
     def test_unknown_target_returns_none(self):
         assert fingerprint_for("bogus-target") is None
 
+    def test_aliases_match_curl_cffi_defaults(self):
+        """Drift guard: bare aliases must stay aligned with curl_cffi's DEFAULT_*
+        targets so a curl_cffi upgrade cannot silently cause TLS/header skew."""
+        from curl_cffi.requests.impersonate import DEFAULT_CHROME, DEFAULT_FIREFOX
+
+        from impersonate_proxy.fingerprint import _ALIASES, _FINGERPRINTS
+
+        assert _ALIASES["chrome"] == DEFAULT_CHROME
+        assert _ALIASES["firefox"] == DEFAULT_FIREFOX
+        assert DEFAULT_CHROME in _FINGERPRINTS
+        assert DEFAULT_FIREFOX in _FINGERPRINTS
+        assert fingerprint_for("chrome") == fingerprint_for(DEFAULT_CHROME)
+        assert fingerprint_for("firefox") == fingerprint_for(DEFAULT_FIREFOX)
+
 
 class TestFirefoxFingerprint:
     """Firefox curation is UA-only: no client hints, no order override."""

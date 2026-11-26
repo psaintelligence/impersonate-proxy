@@ -79,7 +79,7 @@ def cffi_defaults_headers(headers: dict[str, str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, v in headers.items():
         kl = k.lower()
-        if kl in _STRIP_FOR_CFFI_DEFAULTS:
+        if kl in _STRIP_FOR_CFFI_DEFAULTS or kl.startswith("sec-ch-ua-"):
             continue
         if kl in _DROP_HEADERS:
             if kl == "connection":

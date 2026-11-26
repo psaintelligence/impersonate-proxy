@@ -182,6 +182,39 @@ class TestConnectKeepAlive:
                 tls.close()
         assert s1 == 502
 
+    def test_mitm_preserves_multiple_set_cookie_headers(self, mitm_proxy):
+        """Multiple Set-Cookie headers from curl_cffi must be emitted separately on the tunnel."""
+        from curl_cffi.requests.headers import Headers
+
+        ctx, proxy_url, ca_dir = mitm_proxy
+        resp = _FakeResponse()
+        resp.headers = Headers(
+            [
+                ("Content-Type", "text/plain"),
+                ("Set-Cookie", "a=1; Path=/"),
+                ("Set-Cookie", "b=2; Path=/; HttpOnly"),
+            ]
+        )
+
+        with patch("impersonate_proxy.server.do_request", lambda *a, **k: resp):
+            tls = _open_tunnel(proxy_url, "cookies.test", ca_dir)
+            try:
+                tls.sendall(b"GET /login HTTP/1.1\r\nHost: cookies.test\r\nConnection: close\r\n\r\n")
+                raw = b""
+                while True:
+                    chunk = tls.recv(4096)
+                    if not chunk:
+                        break
+                    raw += chunk
+            finally:
+                tls.close()
+        head = raw.partition(b"\r\n\r\n")[0].decode("latin-1")
+        set_cookie_lines = [line for line in head.split("\r\n") if line.lower().startswith("set-cookie:")]
+        assert set_cookie_lines == [
+            "Set-Cookie: a=1; Path=/",
+            "Set-Cookie: b=2; Path=/; HttpOnly",
+        ]
+
 
 class TestMaxBodySize:
     def test_mitm_oversized_content_length_413(self, mitm_proxy):

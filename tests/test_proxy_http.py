@@ -47,6 +47,26 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"OK")
             return
 
+        if self.path == "/set-cookies":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Set-Cookie", "a=1; Path=/")
+            self.send_header("Set-Cookie", "b=2; Path=/")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
+
+        if self.path == "/echo-cookie":
+            cookie_val = self.headers.get("Cookie", "")
+            body = f"cookie={cookie_val}".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/redirected")
@@ -305,6 +325,68 @@ class TestProxyHTTP:
             call_kwargs = mock_sess.request.call_args[1]
             assert call_kwargs["proxies"] == {"http": "http://parent.proxy:8080", "https": "http://parent.proxy:8080"}
             assert call_kwargs["timeout"] == (5.0, 60.0)
+
+    def test_passthrough_skips_fingerprint_and_extra_fp(self):
+        """In passthrough mode, do_request must forward client headers untouched
+        and must not inject extra_fp header_order or Cache-Control suppression."""
+        from unittest.mock import patch
+
+        from impersonate_proxy.context import ProxyConfig, ProxyContext
+        from impersonate_proxy.session_pool import do_request
+
+        ctx = ProxyContext(ProxyConfig(header_mode="passthrough", fingerprint_real=True))
+        client_headers = {"User-Agent": "custom-client/1.0", "X-Custom": "1"}
+        with patch("impersonate_proxy.session_pool.get_session") as mock_get_session:
+            mock_sess = mock_get_session.return_value
+            do_request(ctx, "GET", "http://example.com", client_headers, None)
+            mock_sess.request.assert_called_once()
+            call_kwargs = mock_sess.request.call_args[1]
+            assert call_kwargs["headers"] == client_headers
+            assert call_kwargs["extra_fp"] is None
+
+    def test_pooled_sessions_do_not_bleed_or_clobber_cookies(self, upstream_server):
+        """Set-Cookie from one request must never bleed into or overwrite another
+        client's Cookie header when reusing a pooled curl_cffi session."""
+        ctx = ProxyContext(ProxyConfig(session_pool_max=1))
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        try:
+            r1 = requests.get(f"{upstream_server}/set-cookies", proxies={"http": proxy_url}, timeout=10)
+            assert r1.status_code == 200
+            # Multiple Set-Cookie headers must be preserved individually, not comma-joined.
+            set_cookies = r1.raw.headers.getlist("Set-Cookie")
+            assert set_cookies == ["a=1; Path=/", "b=2; Path=/"]
+
+            # Next request with no Cookie header must not inherit r1's cookies.
+            r2 = requests.get(f"{upstream_server}/echo-cookie", proxies={"http": proxy_url}, timeout=10)
+            assert r2.status_code == 200
+            assert r2.text == "cookie="
+
+            # Client-supplied Cookie header must reach upstream intact (not clobbered).
+            r3 = requests.get(
+                f"{upstream_server}/echo-cookie",
+                headers={"Cookie": "client=99"},
+                proxies={"http": proxy_url},
+                timeout=10,
+            )
+            assert r3.status_code == 200
+            assert r3.text == "cookie=client=99"
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
+
+    def test_session_ignores_ambient_proxy_env(self, upstream_server, monkeypatch):
+        """Ambient HTTP_PROXY/HTTPS_PROXY must not cause curl_cffi to loop or fail."""
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+        monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+        ctx = ProxyContext(ProxyConfig())
+        server, proxy_url = _start_proxy_with_ctx(ctx)
+        try:
+            resp = requests.get(f"{upstream_server}/hello", proxies={"http": proxy_url}, timeout=10)
+            assert resp.status_code == 200
+            assert resp.text == "GET /hello"
+        finally:
+            server.shutdown()
+            ctx.clear_session_pool()
 
 
 def _start_proxy_with_ctx(ctx: ProxyContext) -> tuple[ThreadingHTTPServer, str]:

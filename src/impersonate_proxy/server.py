@@ -138,6 +138,20 @@ def _iter_content_bytes(resp: "cffi_requests.Response") -> Iterator[bytes]:
     return resp.iter_content()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 
+def _iter_response_headers(resp: "cffi_requests.Response") -> list[tuple[str, str | None]]:
+    """Return all upstream response headers, preserving repeated keys like Set-Cookie.
+
+    ``curl_cffi``'s ``Headers.items()`` comma-joins repeated headers (which
+    corrupts multiple ``Set-Cookie`` headers per RFC 6265), whereas
+    ``multi_items()`` preserves every wire header individually. Falls back to
+    ``items()`` for dict-backed test doubles.
+    """
+    headers = resp.headers
+    if hasattr(headers, "multi_items"):
+        return headers.multi_items()
+    return list(headers.items())
+
+
 def get_client_netblock(ip_str: str) -> str:
     """Return the /24 netblock for IPv4 or /64 netblock for IPv6."""
     try:
@@ -393,7 +407,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         status_code = resp.status_code
         reason = http.client.responses.get(status_code, "Unknown")
         wfile.write(f"HTTP/1.1 {status_code} {reason}\r\n".encode())
-        for k, v in resp.headers.items():
+        for k, v in _iter_response_headers(resp):
             if k.lower() in skip_resp:
                 continue
             wfile.write(f"{k}: {v or ''}\r\n".encode())
@@ -505,7 +519,7 @@ class ProxyRequestHandler(BaseHTTPRequestHandler):
         try:
             is_head = self.command == "HEAD"
             skip_resp = {"transfer-encoding", "content-encoding", "content-length"}
-            resp_headers = [(k, v or "") for k, v in resp.headers.items() if k.lower() not in skip_resp]
+            resp_headers = [(k, v or "") for k, v in _iter_response_headers(resp) if k.lower() not in skip_resp]
             if is_head:
                 self.send_response(resp.status_code)
                 for key, val in resp_headers:

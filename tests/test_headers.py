@@ -181,6 +181,29 @@ class TestCffiDefaultsMode:
         # User-Agent is stripped (curl_cffi injects the profile UA)
         assert "User-Agent" not in out
 
+    def test_strips_high_entropy_sec_ch_ua_family(self):
+        """All Sec-CH-UA-* client hints must be stripped so Chrome hints never leak
+        onto a Firefox profile or leave mismatched high-entropy values behind."""
+        headers = {
+            "Host": "example.com",
+            "Sec-CH-UA": '"Google Chrome";v="120"',
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"macOS"',
+            "Sec-CH-UA-Platform-Version": '"14.2.1"',
+            "Sec-CH-UA-Full-Version": '"120.0.6099.109"',
+            "Sec-CH-UA-Full-Version-List": '"Google Chrome";v="120.0.6099.109"',
+            "Sec-CH-UA-Arch": '"arm"',
+            "Sec-CH-UA-Bitness": '"64"',
+            "Sec-CH-UA-Model": '"Pixel 8"',
+            "Sec-CH-UA-WoW64": "?0",
+            "sec-ch-ua-form-factors": '"Desktop"',
+            "Sec-Fetch-Mode": "cors",
+        }
+        out = cffi_defaults_headers(headers)
+        assert not any(k.lower().startswith("sec-ch-ua") for k in out)
+        assert out["Host"] == "example.com"
+        assert out["Sec-Fetch-Mode"] == "cors"
+
     def test_returns_a_copy(self, client_headers_non_browser_like):
         out = cffi_defaults_headers(client_headers_non_browser_like)
         assert out is not client_headers_non_browser_like

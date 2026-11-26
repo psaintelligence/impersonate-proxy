@@ -36,12 +36,24 @@ warnings.filterwarnings("ignore", category=CurlCffiWarning, message="Extra finge
 
 
 def get_session(ctx: ProxyContext) -> cffi_requests.Session[Any]:
-    """Get a reused curl_cffi session from the pool or create a new one."""
+    """Get a reused curl_cffi session from the pool or create a new one.
+
+    ``discard_cookies=True`` keeps the shared pool stateless with respect to
+    cookies so ``Set-Cookie`` responses for one client can never bleed into or
+    clobber another client's ``Cookie`` header. ``trust_env=False`` prevents
+    the proxy from accidentally looping through ambient ``HTTP_PROXY`` /
+    ``HTTPS_PROXY`` variables; egress proxying is configured explicitly via
+    ``--upstream-proxy``.
+    """
     ctx.stats.record_session_leased()
     try:
         return ctx.session_pool.get_nowait()
     except queue.Empty:
-        return cffi_requests.Session(impersonate=ctx.config.impersonate)
+        return cffi_requests.Session(
+            impersonate=ctx.config.impersonate,
+            discard_cookies=True,
+            trust_env=False,
+        )
 
 
 def release_session(ctx: ProxyContext, session: cffi_requests.Session[Any], *, healthy: bool = True) -> None:
@@ -64,10 +76,11 @@ def _issue_request(
     allow_redirects: bool,
 ) -> cffi_requests.Response:
     """Issue one request on the given session and wire its close() to the pool."""
-    fp = fingerprint_for(ctx.config.impersonate) if ctx.config.fingerprint_real else None
     if ctx.config.header_mode == "passthrough":
+        fp = None
         out_headers = dict(headers)
     else:
+        fp = fingerprint_for(ctx.config.impersonate) if ctx.config.fingerprint_real else None
         out_headers = cffi_defaults_headers(headers)
         if fp is not None:
             out_headers.update(fp.to_headers())
